@@ -1,0 +1,73 @@
+# --- Secrets & env ---
+.env
+.env.local
+.env.*.local
+*.pem
+*-credentials.json
+service-account*.json
+google-credentials.json
+
+# --- Assets that don't belong in git ---
+# Master MP3 pitch lives in Drive + local assets/, not in repo
+assets/
+master_pitch.mp3
+master_pitch_*.mp3
+profile_overlay.png
+profile_overlay.gif
+profile_overlay_*.png
+profile_overlay_*.gif
+
+# Generated video output
+output/
+recordings/
+*.mp4
+*.webm
+*.mov
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.coverage
+htmlcov/
+
+# --- Node / Chrome extension ---
+node_modules/
+dist/
+build/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.parcel-cache/
+
+# --- Playwright ---
+playwright-report/
+test-results/
+playwright/.cache/
+
+# --- n8n local data ---
+.n8n/
+n8n-data/
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# --- ScreenFlow IndexedDB exports (if any get written locally) ---
+ScreenFlow_*.webm
+ScreenFlow_*.mp4

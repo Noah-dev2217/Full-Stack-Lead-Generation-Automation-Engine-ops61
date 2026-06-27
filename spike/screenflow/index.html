@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="ScreenFlow - A powerful browser-based screen recorder for capturing lectures, videos, presentations, and any on-screen content with ease.">
+    <title>ScreenFlow – Browser Screen Recorder</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Animated background -->
+    <div class="bg-animation">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+    </div>
+
+    <!-- Main App Container -->
+    <div id="app" class="app-container">
+        
+        <!-- Header / Navbar -->
+        <header id="app-header" class="app-header">
+            <div class="logo">
+                <div class="logo-icon">
+                    <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+                        <circle cx="14" cy="14" r="12" stroke="url(#logoGrad)" stroke-width="2.5"/>
+                        <circle cx="14" cy="14" r="5" fill="url(#logoGrad)"/>
+                        <defs>
+                            <linearGradient id="logoGrad" x1="0" y1="0" x2="28" y2="28">
+                                <stop stop-color="#a78bfa"/>
+                                <stop offset="1" stop-color="#6366f1"/>
+                            </linearGradient>
+                        </defs>
+                    </svg>
+                </div>
+                <span class="logo-text">ScreenFlow</span>
+            </div>
+            <nav class="nav-tabs">
+                <button id="tab-recorder" class="nav-tab active" data-tab="recorder">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/></svg>
+                    Recorder
+                </button>
+                <button id="tab-library" class="nav-tab" data-tab="library">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+                    Library
+                </button>
+            </nav>
+            <div class="header-actions">
+                <button id="settings-btn" class="icon-btn" title="Settings" aria-label="Open Settings">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- RECORDER VIEW -->
+        <main id="recorder-view" class="view active">
+            
+            <!-- Status Banner -->
+            <div id="status-banner" class="status-banner idle">
+                <div class="status-dot"></div>
+                <span id="status-text">Ready to Record</span>
+            </div>
+
+            <!-- Preview Area -->
+            <section id="preview-section" class="preview-section">
+                <div id="preview-container" class="preview-container">
+                    <!-- Idle state -->
+                    <div id="preview-idle" class="preview-idle">
+                        <div class="preview-idle-icon">
+                            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4">
+                                <rect x="2" y="3" width="20" height="14" rx="2"/>
+                                <path d="M8 21h8M12 17v4"/>
+                            </svg>
+                        </div>
+                        <p class="preview-idle-text">Click <strong>Start Recording</strong> to capture your screen</p>
+                        <p class="preview-idle-sub">Supports screen, window, and tab capture with audio</p>
+                    </div>
+                    <!-- Live preview video -->
+                    <video id="preview-video" class="preview-video" autoplay muted playsinline></video>
+                    <!-- Recording overlay -->
+                    <div id="recording-overlay" class="recording-overlay hidden">
+                        <div class="rec-indicator">
+                            <div class="rec-dot"></div>
+                            <span>REC</span>
+                        </div>
+                        <div id="timer-display" class="timer-display">00:00:00</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Controls Panel -->
+            <section id="controls-panel" class="controls-panel">
+                <div class="controls-row">
+                    <!-- Main Record Button -->
+                    <button id="btn-record" class="btn-record" title="Start Recording">
+                        <div class="btn-record-inner">
+                            <svg id="icon-record" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
+                            <svg id="icon-stop" class="hidden" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                        </div>
+                    </button>
+                    
+                    <!-- Pause / Resume -->
+                    <button id="btn-pause" class="btn-control" title="Pause" disabled>
+                        <svg id="icon-pause" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+                        <svg id="icon-resume" class="hidden" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+                    </button>
+
+                    <!-- Screenshot -->
+                    <button id="btn-screenshot" class="btn-control" title="Take Screenshot" disabled>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                    </button>
+                </div>
+
+                <!-- Settings Row -->
+                <div class="settings-row">
+                    <div class="setting-group">
+                        <label for="select-quality">Quality</label>
+                        <select id="select-quality" class="select-input">
+                            <option value="high">High (1080p)</option>
+                            <option value="medium" selected>Medium (720p)</option>
+                            <option value="low">Low (480p)</option>
+                        </select>
+                    </div>
+                    <div class="setting-group">
+                        <label for="select-fps">FPS</label>
+                        <select id="select-fps" class="select-input">
+                            <option value="60">60 fps</option>
+                            <option value="30" selected>30 fps</option>
+                            <option value="15">15 fps</option>
+                        </select>
+                    </div>
+                    <div class="setting-group">
+                        <label for="select-format">Format</label>
+                        <select id="select-format" class="select-input">
+                            <option value="webm" selected>WebM</option>
+                        </select>
+                    </div>
+                    <div class="setting-group toggle-group">
+                        <label for="toggle-audio">System Audio</label>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="toggle-audio" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="setting-group toggle-group">
+                        <label for="toggle-mic">Microphone</label>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="toggle-mic">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Automation / Scheduling Panel -->
+            <section id="automation-panel" class="automation-panel">
+                <div class="panel-header">
+                    <h2>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                        Automated Recording
+                    </h2>
+                    <p class="panel-sub">Schedule recordings to start and stop automatically</p>
+                </div>
+                <div class="automation-controls">
+                    <div class="auto-group">
+                        <label for="auto-delay">Start Delay</label>
+                        <div class="input-with-unit">
+                            <input type="number" id="auto-delay" class="number-input" min="0" max="3600" value="0" placeholder="0">
+                            <span class="unit">seconds</span>
+                        </div>
+                    </div>
+                    <div class="auto-group">
+                        <label>Custom Timer (auto-stop)</label>
+                        <div class="timer-inputs">
+                            <div class="timer-field">
+                                <input type="number" id="auto-timer-min" class="number-input timer-num" min="0" max="999" value="0" placeholder="0">
+                                <span class="unit">min</span>
+                            </div>
+                            <span class="timer-colon">:</span>
+                            <div class="timer-field">
+                                <input type="number" id="auto-timer-sec" class="number-input timer-num" min="0" max="59" value="0" placeholder="0">
+                                <span class="unit">sec</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="auto-group">
+                        <label for="auto-schedule">Start At</label>
+                        <input type="datetime-local" id="auto-schedule" class="datetime-input">
+                    </div>
+                    <div class="auto-group">
+                        <label for="auto-stop-at">Stop At</label>
+                        <input type="datetime-local" id="auto-stop-at" class="datetime-input">
+                    </div>
+                    <div class="auto-actions">
+                        <button id="btn-select-tab" class="btn-select-tab">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+                            Select Tab
+                        </button>
+                        <button id="btn-schedule" class="btn-schedule">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                            Schedule Recording
+                        </button>
+                    </div>
+                </div>
+                <!-- Pre-selected tab indicator -->
+                <div id="preselected-tab-info" class="preselected-tab-info hidden">
+                    <div class="preselected-badge">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                        <span id="preselected-tab-label">Tab selected for scheduled recording</span>
+                    </div>
+                    <button id="btn-clear-tab" class="btn-cancel-schedule">Clear</button>
+                </div>
+                <!-- Scheduled items list -->
+                <div id="scheduled-list" class="scheduled-list"></div>
+            </section>
+
+        </main>
+
+        <!-- LIBRARY VIEW -->
+        <main id="library-view" class="view">
+            <div class="library-header">
+                <div class="library-header-top">
+                    <h2>Recording Library</h2>
+                    <p class="library-count" id="library-count">0 recordings</p>
+                </div>
+                <div class="library-tabs">
+                    <button class="lib-tab active" data-filter="active">All Records</button>
+                    <button class="lib-tab" data-filter="trash">Trash</button>
+                </div>
+            </div>
+            <div id="library-grid" class="library-grid">
+                <!-- Empty states -->
+                <div id="library-empty" class="library-empty">
+                    <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3">
+                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                    <p>No recordings yet</p>
+                    <span>Your captured recordings will appear here</span>
+                </div>
+                <div id="trash-empty" class="library-empty hidden">
+                    <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3">
+                        <polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    </svg>
+                    <p>Trash is empty</p>
+                    <span>Deleted videos will stay here until permanently removed</span>
+                </div>
+            </div>
+        </main>
+
+        <!-- Settings Modal -->
+        <div id="settings-modal" class="modal hidden">
+            <div class="modal-backdrop"></div>
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Settings</h2>
+                    <button id="close-settings" class="icon-btn" aria-label="Close Settings">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="settings-section">
+                        <h3>Recording Defaults</h3>
+                        <div class="setting-item">
+                            <label>Default filename prefix</label>
+                            <input type="text" id="setting-filename" class="text-input" value="ScreenFlow" placeholder="Recording">
+                        </div>
+                        <div class="setting-item">
+                            <label>Countdown before start</label>
+                            <select id="setting-countdown" class="select-input">
+                                <option value="0">No countdown</option>
+                                <option value="3" selected>3 seconds</option>
+                                <option value="5">5 seconds</option>
+                                <option value="10">10 seconds</option>
+                            </select>
+                        </div>
+                        <div class="setting-item">
+                            <label>Show mouse cursor</label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="setting-cursor" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="settings-section">
+                        <h3>Notifications</h3>
+                        <div class="setting-item">
+                            <label>Sound on start/stop</label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="setting-sound" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <div class="setting-item">
+                            <label>Browser push notifications</label>
+                            <div class="push-note-row">
+                                <button id="btn-enable-notifications" class="btn-card primary" style="max-width:160px;padding:6px 14px;">
+                                    Enable
+                                </button>
+                                <button id="btn-test-notification" class="btn-card secondary" style="max-width:100px;padding:6px 14px;">
+                                    Test
+                                </button>
+                            </div>
+                        </div>
+                        <div class="setting-item">
+                            <div class="toggle-label-group">
+                                <label>Persistent notifications</label>
+                                <span class="label-hint">Stay until clicked</span>
+                            </div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="setting-persistent-note" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Countdown Overlay -->
+        <div id="countdown-overlay" class="countdown-overlay hidden">
+            <div id="countdown-number" class="countdown-number">3</div>
+        </div>
+
+        <!-- Toast notifications -->
+        <div id="toast-container" class="toast-container"></div>
+
+        <!-- Recording Finished Overlay -->
+        <div id="finished-overlay" class="finished-overlay hidden">
+            <div class="finished-backdrop"></div>
+            <div class="finished-modal">
+                <div class="finished-icon">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 11.08V12a10 10 0 11-5.93-9.14"></path>
+                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                    </svg>
+                </div>
+                <h2>Recording Complete!</h2>
+                <p id="finished-filename">Recording saved successfully.</p>
+                <div class="finished-actions">
+                    <button id="btn-dismiss-finished" class="btn-finished-primary">Dismiss</button>
+                    <button id="btn-view-library" class="btn-finished-secondary">View in Library</button>
+                </div>
+                <div class="finished-reminder">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    <span>Ready to record the next video?</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Fix WebM Duration script to make recordings seekable -->
+    <script src="https://cdn.jsdelivr.net/npm/fix-webm-duration/fix-webm-duration.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
