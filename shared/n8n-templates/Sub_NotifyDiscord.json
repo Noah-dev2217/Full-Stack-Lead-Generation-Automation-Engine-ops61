@@ -1,0 +1,88 @@
+{
+  "name": "Sub_NotifyDiscord",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "b2c3d4e5-0001-4000-8000-000000000001",
+      "name": "When Called by Pipeline",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        -360,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build a Discord webhook embed from a normalized notification request.\n// Input item shape:\n//   { level: 'info'|'hot'|'error', pipeline: 'loomless'|'jv'|'terminator'|'fb_router',\n//     message: 'string', fields?: { key: value, ... } }\nconst EMOJI = { info: 'ℹ️', hot: '🔥', error: '❌' };\nconst COLOR = { info: 0x3498db, hot: 0xe67e22, error: 0xe74c3c };\n\nconst webhookUrl = $env.DISCORD_WEBHOOK_OPS61_FEED;\nif (!webhookUrl) {\n  throw new Error('Sub_NotifyDiscord: env var DISCORD_WEBHOOK_OPS61_FEED is not set on this n8n instance');\n}\n\nconst out = [];\nfor (const item of $input.all()) {\n  const d = item.json || {};\n  const level = String(d.level || 'info').toLowerCase();\n  const emoji = EMOJI[level] || EMOJI.info;\n  const color = COLOR[level] || COLOR.info;\n  const pipeline = d.pipeline || 'unknown';\n  const message = d.message || '';\n\n  const fields =\n    d.fields && typeof d.fields === 'object'\n      ? Object.entries(d.fields).map(([name, value]) => ({\n          name: String(name).slice(0, 256),\n          value: String(value).slice(0, 1024) || '\\u200b',\n          inline: true,\n        }))\n      : [];\n\n  const embed = {\n    title: `${emoji} [${pipeline}] ${message}`.slice(0, 256),\n    color,\n    fields,\n    footer: { text: 'OPS-61' },\n    timestamp: new Date().toISOString(),\n  };\n\n  out.push({ json: { webhookUrl, payload: { embeds: [embed] } } });\n}\nreturn out;"
+      },
+      "id": "b2c3d4e5-0002-4000-8000-000000000002",
+      "name": "Format Discord Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -130,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.webhookUrl }}",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {}
+      },
+      "id": "b2c3d4e5-0003-4000-8000-000000000003",
+      "name": "POST to Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        110,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "When Called by Pipeline": {
+      "main": [
+        [
+          {
+            "node": "Format Discord Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Discord Payload": {
+      "main": [
+        [
+          {
+            "node": "POST to Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": [
+    {
+      "name": "ops-61"
+    },
+    {
+      "name": "foundation"
+    }
+  ]
+}

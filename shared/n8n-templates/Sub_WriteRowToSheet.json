@@ -1,0 +1,132 @@
+{
+  "name": "Sub_WriteRowToSheet",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "a1b2c3d4-0001-4000-8000-000000000001",
+      "name": "When Called by Pipeline",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate the target tab and auto-fill the per-tab timestamp column.\n// Input item shape: { tab: '<TabName>', row: { <col>: <value>, ... } }\n// Output item json = the flattened row columns + `tab` (passed through for the\n// Sheets node's sheetName expression; no tab named 'tab' exists so auto-map\n// ignores it).\nconst TIMESTAMP_COLUMN = {\n  Loomless: 'created_at',\n  JV_Targets: 'created_at',\n  Terminator_Loom: 'recorded_at',\n  Inbound: 'captured_at',\n};\n\nconst out = [];\nfor (const item of $input.all()) {\n  const data = item.json || {};\n  const tab = data.tab;\n  const row = { ...(data.row || {}) };\n\n  if (!Object.prototype.hasOwnProperty.call(TIMESTAMP_COLUMN, tab)) {\n    throw new Error(\n      `Sub_WriteRowToSheet: unknown tab \"${tab}\". Must be one of: ` +\n        Object.keys(TIMESTAMP_COLUMN).join(', ')\n    );\n  }\n\n  const tsCol = TIMESTAMP_COLUMN[tab];\n  if (!row[tsCol]) {\n    // UTC ISO 8601, seconds precision: 2026-06-27T15:30:00Z\n    row[tsCol] = new Date().toISOString().replace(/\\.\\d{3}Z$/, 'Z');\n  }\n\n  out.push({ json: { ...row, tab } });\n}\nreturn out;"
+      },
+      "id": "a1b2c3d4-0002-4000-8000-000000000002",
+      "name": "Validate & Prepare Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.GOOGLE_SHEET_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $json.tab }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0003-4000-8000-000000000003",
+      "name": "Append Row to Tab",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        60,
+        0
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_SHEETS_SA_CREDENTIAL_ID",
+          "name": "Google Sheets — OPS-61 SA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Return a clean success payload to the calling pipeline.\nreturn $input.all().map((item) => ({\n  json: {\n    success: true,\n    tab: item.json.tab,\n    row: item.json,\n  },\n}));"
+      },
+      "id": "a1b2c3d4-0004-4000-8000-000000000004",
+      "name": "Return Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "When Called by Pipeline": {
+      "main": [
+        [
+          {
+            "node": "Validate & Prepare Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Prepare Row": {
+      "main": [
+        [
+          {
+            "node": "Append Row to Tab",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append Row to Tab": {
+      "main": [
+        [
+          {
+            "node": "Return Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [
+    {
+      "name": "ops-61"
+    },
+    {
+      "name": "foundation"
+    }
+  ]
+}
