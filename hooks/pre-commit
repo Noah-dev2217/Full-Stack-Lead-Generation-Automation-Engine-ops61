@@ -1,0 +1,29 @@
+#!/bin/sh
+# OPS-61 pre-commit guard — blocks secrets from ever being staged.
+# Activate once per clone:  git config core.hooksPath hooks
+#
+# Belt-and-suspenders on top of .gitignore: catches a file that was
+# force-added (git add -f) or whose ignore rule was edited away.
+
+staged=$(git diff --cached --name-only)
+
+# Filenames that must never be committed.
+blocked=$(printf '%s\n' "$staged" | grep -iE '(^|/)(\.env(\.[^/]+)?|service-account[^/]*\.json|google-credentials\.json|[^/]*-credentials\.json)$' | grep -vE '\.env\.example$')
+
+if [ -n "$blocked" ]; then
+  echo "✖ pre-commit: refusing to commit secret file(s):"
+  printf '    %s\n' $blocked
+  echo "  These belong in .env / service-account.json (gitignored)."
+  echo "  If this is a false positive, commit with --no-verify (think first)."
+  exit 1
+fi
+
+# Scan staged text for obvious key material.
+leak=$(git diff --cached -U0 | grep -E '^\+' | grep -iE 'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|sk-ant-[A-Za-z0-9]|"private_key"[[:space:]]*:')
+if [ -n "$leak" ]; then
+  echo "✖ pre-commit: staged diff looks like it contains a private key or API secret."
+  echo "  Remove it, or commit with --no-verify if you are certain it's safe."
+  exit 1
+fi
+
+exit 0
