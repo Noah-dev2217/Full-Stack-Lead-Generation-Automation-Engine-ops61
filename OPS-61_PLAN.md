@@ -1,6 +1,6 @@
 # OPS-61 — Full-Stack Lead Generation & Automation Engine
 
-**Status:** PLAN v6 — spike validated (picker bypass confirmed), all decisions resolved, ready for per-pipeline build specs.
+**Status:** PLAN v7 — build-locally, handoff-to-server model locked. Foundation build in progress.
 **Owner:** Rinoah (solo dev), Jon (direction)
 **Due:** Jul 3
 **Linear:** OPS-61
@@ -96,7 +96,7 @@ New code: Terminator Loom recorder orchestrator + FB Group extension. Rest is re
 | # | Decision | Choice | Rationale |
 |---|---|---|---|
 | 1 | CRM | Google Sheets, per-pipeline tabs | Spec says so; 100/day fits Sheets easily; no Supabase tax for solo dev |
-| 2 | Terminator Loom runtime | Rinoah's local Mac/PC, scheduled | Even with ScreenFlow removing audio device fiddliness, local v1 is realistic; portable to VPS later if needed |
+| 2 | Terminator Loom runtime | **Build:** Rinoah's local machine (dev + test). **Run:** company server machine (after handoff). | Solo dev builds and validates against a controlled local environment; handoff package migrates the whole stack (recorder + local Docker n8n + all pipelines) to the company server for production run. Removes prod deployment risk from every daily iteration. |
 | 3 | Video hosting | Google Drive folder | Spec says so; operator already lives in Drive |
 | 4 | FB Group capture | Chrome extension (diverge from spec) | Spec says "local browser script" but extension runs in admin's already-authenticated session = lowest detection risk + reuses Rinoah's proven LinkedIn pattern. Read-only DOM scrape — no clicks, no risk of auto-approve |
 | 5 | First-line QA / auditor | OFF for v1 | Adds latency + cost; operator filters at send time; revisit if quality drops |
@@ -376,6 +376,7 @@ Dev uses placeholders (any 90-second mp3, any square headshot) during build. Swa
 3. **JV Research Bot** — reuses Loomless's Perplexity integration
 4. **FB Group Chrome extension + webhook** — narrow scope, ships fast
 5. **Terminator Loom recorder** — most complex, dedicated Claude Code session, depends on spike #0
+6. **Handoff to company server machine** — package + migrate the full stack (n8n workflows, credentials shape, recorder service, docker compose, docs) to the company server. Uses the `handoff-package` skill. Produces a `HANDOFF.md` runbook that a fresh operator can follow to bring the whole system online.
 
 Each step gets its own Claude Code session with this doc + the step's spec section + the Sheets schema. Don't one-shot all four.
 
