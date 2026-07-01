@@ -698,6 +698,22 @@
         660,
         240
       ]
+    },
+    {
+      "parameters": {
+        "content": "## Sub_WriteRowToSheet — shared row writer (all OPS-61 pipelines)\n\n**Input** (Execute Workflow): `{ tab, row }`\n- `tab` ∈ Loomless | JV_Targets | Terminator_Loom | Inbound\n- `row` = object keyed by that tab's columns (see shared/sheets-schema.md)\n\n**Output:** `{ success: true, tab, row }`\n\n**Design**\n- `Route by Tab` (Switch) → one tab-specific Append per tab: hardcoded sheetName + defineBelow with the locked columns. `tab` is NEVER written as a column.\n- Unknown tab → `Unknown Tab Error` (Stop And Error) — fails loudly.\n- Timestamp column (created_at / recorded_at / captured_at) auto-filled with UTC ISO 8601 if the caller omits it.\n\n**Batch semantics: ISOLATED FAIL** (verified 2026-07-02)\nEach item routes independently. In a mixed batch, VALID items are still written even if another item has a bad tab (confirmed: an item *after* the bad one still landed). The bad item hits Unknown Tab Error, which makes the CALLER's Execute Workflow node go RED.\n⇒ An error from this sub does NOT mean nothing wrote — valid rows persist. Don't rely on the pass/fail signal alone to know what was written.\n\n**Do NOT** revert the Append nodes to autoMapInputData or a per-item `{{ $json.tab }}` sheetName — that reintroduces the schema-corruption + misroute bugs this design fixed.",
+        "height": 560,
+        "width": 640,
+        "color": 4
+      },
+      "id": "a1b2c3d4-00ff-4000-8000-0000000000ff",
+      "name": "Doc — Contract & Semantics",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -600,
+        -320
+      ]
     }
   ],
   "connections": {
