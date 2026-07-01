@@ -5,8 +5,15 @@
 > iterated** — end-to-end tuning (STEP 4) depends on real Perplexity outputs,
 > which are blocked on the Perplexity key. Do not treat the ≥8/10 sendable
 > target as met until iteration happens.
-> **Model:** `claude-sonnet-4-6` (fast enough for batches, strong copy quality;
-> escalate to Opus only if v1 output isn't good enough).
+> **Model (PINNED):** `claude-sonnet-4-5-20250929` — use this exact string in the
+> Anthropic node / HTTP Request node of the workflow. Build Spec #2 named
+> `claude-sonnet-4-6`, but this account/key resolves to
+> `claude-sonnet-4-5-20250929` (verified via direct `api.anthropic.com/v1/messages`
+> call). Escalate to an Opus model only if v1 output isn't good enough.
+> **Credential:** n8n `Anthropic account` (reads `{{ $env.ANTHROPIC_API_KEY }}`).
+> Note: n8n's built-in credential **Test button 404s** on this version (hits a
+> deprecated endpoint) — this is a false negative; the key is verified working
+> via direct API call, and real workflow nodes function correctly.
 
 ---
 
