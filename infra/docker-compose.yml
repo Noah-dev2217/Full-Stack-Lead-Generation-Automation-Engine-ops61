@@ -1,0 +1,67 @@
+# OPS-61 foundation — dedicated n8n container
+#
+# Fully isolated from the OPS-52 n8n (C:\youtube-automation-os). Shares nothing:
+#   - separate compose project (name: ops61)
+#   - separate container name (ops61-n8n)
+#   - separate named volume (ops61_n8n_data)
+#   - separate host port (5679 -> 5678 internal)
+# Both stacks can run at the same time.
+#
+#   Start:  docker compose up -d      (run from this infra/ directory)
+#   Open:   http://localhost:5679
+#
+# Secrets (Sheet ID + Discord webhook) are interpolated from the adjacent
+# infra/.env via ${...}. infra/.env is gitignored; infra/.env.example is the
+# committed template. See README.md for run + handoff steps.
+
+name: ops61
+
+services:
+  n8n:
+    # Stock upstream image, same n8n version as OPS-52 (which builds a custom
+    # FFmpeg variant on top). OPS-61's foundation needs Sheets + Discord, not
+    # FFmpeg, so we pin the plain image => infra/ is self-contained, no build
+    # context, transfers to the company server as-is at handoff.
+    image: n8nio/n8n:1.121.1
+    container_name: ops61-n8n
+    restart: unless-stopped
+    ports:
+      # host 5679 -> container 5678, so it never collides with OPS-52's 5678
+      - "5679:5678"
+    environment:
+      # Core (WEBHOOK_URL uses 5679 because that's the mapped host port)
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5679/
+      - GENERIC_TIMEZONE=Asia/Manila
+      - TZ=Asia/Manila
+
+      # Execution settings
+      - EXECUTIONS_MODE=regular
+      - EXECUTIONS_TIMEOUT=3600
+      - EXECUTIONS_TIMEOUT_MAX=7200
+
+      # Logging
+      - N8N_LOG_LEVEL=info
+      - N8N_LOG_OUTPUT=console
+
+      # Diagnostics + telemetry off (internal-only)
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_VERSION_NOTIFICATIONS_ENABLED=false
+      - N8N_TEMPLATES_ENABLED=false
+
+      # OPS-61 foundation (Google Sheets CRM + Discord feed).
+      # Values come from the adjacent infra/.env (never committed).
+      - GOOGLE_SHEET_ID=${GOOGLE_SHEET_ID}
+      - DISCORD_WEBHOOK_OPS61_FEED=${DISCORD_WEBHOOK_OPS61_FEED}
+      # Allow $env access inside Code nodes (workflows read the two vars above).
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+    volumes:
+      # Persists workflows, credentials, executions across restarts.
+      # Pinned name so the real Docker volume is exactly ops61_n8n_data.
+      - ops61_n8n_data:/home/node/.n8n
+
+volumes:
+  ops61_n8n_data:
+    name: ops61_n8n_data

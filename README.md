@@ -21,7 +21,7 @@
 | # | Pipeline | Status | Spec |
 |---|---|---|---|
 | 0 | Spike — auto-tab-select validation | ✅ Done | `spike/` |
-| 1 | Foundation — Sheets + n8n base | ⏳ Pending Build Spec | — |
+| 1 | Foundation — Sheets + n8n base | 🔨 Repo built — awaiting manual setup | [`BUILD_SPEC_1_FOUNDATION.md`](./BUILD_SPEC_1_FOUNDATION.md) · [`FOUNDATION_SETUP.md`](./FOUNDATION_SETUP.md) |
 | 2 | Loomless AI Pipeline | ⏳ Pending Build Spec | — |
 | 3 | JV Research Bot | ⏳ Pending Build Spec | — |
 | 4 | FB Group CRM Router | ⏳ Pending Build Spec | — |
@@ -35,8 +35,13 @@
 ops-61/
 ├── README.md                       ← you are here
 ├── OPS-61_PLAN.md                  ← master plan (v6, locked)
+├── FOUNDATION_SETUP.md             ← Build Spec #1 manual setup runbook
+├── BUILD_SPEC_1_FOUNDATION.md      ← Build Spec #1 scope
 ├── .gitignore
 ├── .env.example                    ← env var template (copy to .env, never commit)
+│
+├── hooks/
+│   └── pre-commit                  ← secret guard (git config core.hooksPath hooks)
 │
 ├── docs/
 │   ├── EASYGROW_SPEC.md            ← source spec from Jon
@@ -44,7 +49,8 @@ ops-61/
 │
 ├── shared/
 │   ├── sheets-schema.md            ← canonical 4-tab Sheet schema
-│   └── n8n-templates/              ← shared n8n subworkflows
+│   ├── scripts/                    ← populate_sheet.py, verify_foundation.py (foundation helpers)
+│   └── n8n-templates/              ← shared n8n subworkflows + import runbook
 │
 ├── pipelines/
 │   ├── 01-loomless/                ← Loomless AI personalization (n8n)
@@ -67,6 +73,8 @@ ops-61/
 - **Master plan:** [`OPS-61_PLAN.md`](./OPS-61_PLAN.md)
 - **Source spec:** [`docs/EASYGROW_SPEC.md`](./docs/EASYGROW_SPEC.md)
 - **Sheets schema:** [`shared/sheets-schema.md`](./shared/sheets-schema.md)
+- **Foundation setup runbook:** [`FOUNDATION_SETUP.md`](./FOUNDATION_SETUP.md)
+- **n8n workflow templates:** [`shared/n8n-templates/`](./shared/n8n-templates/)
 - **Spike findings:** [`docs/SPIKE_RESULTS.md`](./docs/SPIKE_RESULTS.md)
 - **NotebookLM context:** https://notebooklm.google.com/notebook/b80416ff-1023-4b63-9fda-033032bac504 (`jonc@fascinatecopy.com`)
 
