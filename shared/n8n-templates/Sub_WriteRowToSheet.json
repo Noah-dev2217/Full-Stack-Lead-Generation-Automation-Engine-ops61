@@ -8,21 +8,137 @@
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1,
       "position": [
-        -400,
-        0
+        -600,
+        300
       ]
     },
     {
       "parameters": {
-        "jsCode": "// Validate the target tab and auto-fill the per-tab timestamp column.\n// Input item shape: { tab: '<TabName>', row: { <col>: <value>, ... } }\n// Output item json = the flattened row columns + `tab` (passed through for the\n// Sheets node's sheetName expression; no tab named 'tab' exists so auto-map\n// ignores it).\nconst TIMESTAMP_COLUMN = {\n  Loomless: 'created_at',\n  JV_Targets: 'created_at',\n  Terminator_Loom: 'recorded_at',\n  Inbound: 'captured_at',\n};\n\nconst out = [];\nfor (const item of $input.all()) {\n  const data = item.json || {};\n  const tab = data.tab;\n  const row = { ...(data.row || {}) };\n\n  if (!Object.prototype.hasOwnProperty.call(TIMESTAMP_COLUMN, tab)) {\n    throw new Error(\n      `Sub_WriteRowToSheet: unknown tab \"${tab}\". Must be one of: ` +\n        Object.keys(TIMESTAMP_COLUMN).join(', ')\n    );\n  }\n\n  const tsCol = TIMESTAMP_COLUMN[tab];\n  if (!row[tsCol]) {\n    // UTC ISO 8601, seconds precision: 2026-06-27T15:30:00Z\n    row[tsCol] = new Date().toISOString().replace(/\\.\\d{3}Z$/, 'Z');\n  }\n\n  out.push({ json: { ...row, tab } });\n}\nreturn out;"
+        "jsCode": "// Auto-fill the per-tab timestamp column and flatten { tab, row } into a\n// single json object: { ...row, tab }. `tab` is kept ONLY for the Switch to\n// route on; the tab-specific Append nodes map columns explicitly (defineBelow)\n// and never write `tab`. Unknown tabs are NOT thrown here on purpose — they\n// fall through the Switch to the loud 'Unknown Tab' error branch.\nconst TIMESTAMP_COLUMN = {\n  Loomless: 'created_at',\n  JV_Targets: 'created_at',\n  Terminator_Loom: 'recorded_at',\n  Inbound: 'captured_at',\n};\n\nconst out = [];\nfor (const item of $input.all()) {\n  const data = item.json || {};\n  const tab = data.tab;\n  const row = { ...(data.row || {}) };\n  const tsCol = TIMESTAMP_COLUMN[tab];\n  if (tsCol && !row[tsCol]) {\n    row[tsCol] = new Date().toISOString().replace(/\\.\\d{3}Z$/, 'Z');\n  }\n  out.push({ json: { ...row, tab } });\n}\nreturn out;"
       },
       "id": "a1b2c3d4-0002-4000-8000-000000000002",
       "name": "Validate & Prepare Row",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -180,
-        0
+        -380,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cond-Loomless",
+                    "leftValue": "={{ $json.tab }}",
+                    "rightValue": "Loomless",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Loomless"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cond-JV_Targets",
+                    "leftValue": "={{ $json.tab }}",
+                    "rightValue": "JV_Targets",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "JV_Targets"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cond-Terminator_Loom",
+                    "leftValue": "={{ $json.tab }}",
+                    "rightValue": "Terminator_Loom",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Terminator_Loom"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cond-Inbound",
+                    "leftValue": "={{ $json.tab }}",
+                    "rightValue": "Inbound",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Inbound"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "a1b2c3d4-0003-4000-8000-000000000003",
+      "name": "Route by Tab",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -140,
+        300
       ]
     },
     {
@@ -36,26 +152,127 @@
         },
         "sheetName": {
           "__rl": true,
-          "value": "={{ $json.tab }}",
+          "value": "Loomless",
           "mode": "name"
         },
         "columns": {
-          "mappingMode": "autoMapInputData",
-          "value": {},
+          "mappingMode": "defineBelow",
+          "value": {
+            "Company_Name": "={{ $json[\"Company_Name\"] }}",
+            "Owner_Full_Name": "={{ $json[\"Owner_Full_Name\"] }}",
+            "First_Name": "={{ $json[\"First_Name\"] }}",
+            "Email": "={{ $json[\"Email\"] }}",
+            "Website": "={{ $json[\"Website\"] }}",
+            "Research_Summary": "={{ $json[\"Research_Summary\"] }}",
+            "Personalized_First_Line": "={{ $json[\"Personalized_First_Line\"] }}",
+            "status": "={{ $json[\"status\"] }}",
+            "created_at": "={{ $json[\"created_at\"] }}"
+          },
           "matchingColumns": [],
-          "schema": [],
+          "schema": [
+            {
+              "id": "Company_Name",
+              "displayName": "Company_Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Owner_Full_Name",
+              "displayName": "Owner_Full_Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "First_Name",
+              "displayName": "First_Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Website",
+              "displayName": "Website",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Research_Summary",
+              "displayName": "Research_Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Personalized_First_Line",
+              "displayName": "Personalized_First_Line",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
           "attemptToConvertTypes": false,
           "convertFieldsToString": true
         },
         "options": {}
       },
-      "id": "a1b2c3d4-0003-4000-8000-000000000003",
-      "name": "Append Row to Tab",
+      "id": "a1b2c3d4-0004-4000-8000-000000000004",
+      "name": "Append Loomless",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        60,
-        0
+        140,
+        -60
       ],
       "credentials": {
         "googleApi": {
@@ -66,15 +283,420 @@
     },
     {
       "parameters": {
-        "jsCode": "// Return a clean success payload to the calling pipeline.\nreturn $input.all().map((item) => ({\n  json: {\n    success: true,\n    tab: item.json.tab,\n    row: item.json,\n  },\n}));"
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.GOOGLE_SHEET_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "JV_Targets",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Name": "={{ $json[\"Name\"] }}",
+            "Email": "={{ $json[\"Email\"] }}",
+            "Social_Links": "={{ $json[\"Social_Links\"] }}",
+            "Audience_Summary": "={{ $json[\"Audience_Summary\"] }}",
+            "Current_Offers": "={{ $json[\"Current_Offers\"] }}",
+            "Source_URL": "={{ $json[\"Source_URL\"] }}",
+            "status": "={{ $json[\"status\"] }}",
+            "created_at": "={{ $json[\"created_at\"] }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Name",
+              "displayName": "Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Social_Links",
+              "displayName": "Social_Links",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Audience_Summary",
+              "displayName": "Audience_Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Current_Offers",
+              "displayName": "Current_Offers",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Source_URL",
+              "displayName": "Source_URL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
       },
-      "id": "a1b2c3d4-0004-4000-8000-000000000004",
+      "id": "a1b2c3d4-0005-4000-8000-000000000005",
+      "name": "Append JV_Targets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        140,
+        120
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_SHEETS_SA_CREDENTIAL_ID",
+          "name": "Google Sheets — OPS-61 SA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.GOOGLE_SHEET_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Terminator_Loom",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "First_Name": "={{ $json[\"First_Name\"] }}",
+            "Last_Name": "={{ $json[\"Last_Name\"] }}",
+            "Website": "={{ $json[\"Website\"] }}",
+            "status": "={{ $json[\"status\"] }}",
+            "video_drive_link": "={{ $json[\"video_drive_link\"] }}",
+            "recorded_at": "={{ $json[\"recorded_at\"] }}",
+            "error_log": "={{ $json[\"error_log\"] }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "First_Name",
+              "displayName": "First_Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Last_Name",
+              "displayName": "Last_Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Website",
+              "displayName": "Website",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "video_drive_link",
+              "displayName": "video_drive_link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "recorded_at",
+              "displayName": "recorded_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "error_log",
+              "displayName": "error_log",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0006-4000-8000-000000000006",
+      "name": "Append Terminator_Loom",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        140,
+        300
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_SHEETS_SA_CREDENTIAL_ID",
+          "name": "Google Sheets — OPS-61 SA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.GOOGLE_SHEET_ID }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Inbound",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Name": "={{ $json[\"Name\"] }}",
+            "Profile_URL": "={{ $json[\"Profile_URL\"] }}",
+            "Q1_Current_Revenue": "={{ $json[\"Q1_Current_Revenue\"] }}",
+            "Q2_12_Month_Goal": "={{ $json[\"Q2_12_Month_Goal\"] }}",
+            "Q3_DM_Permission": "={{ $json[\"Q3_DM_Permission\"] }}",
+            "status": "={{ $json[\"status\"] }}",
+            "operator_action": "={{ $json[\"operator_action\"] }}",
+            "captured_at": "={{ $json[\"captured_at\"] }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Name",
+              "displayName": "Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Profile_URL",
+              "displayName": "Profile_URL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Q1_Current_Revenue",
+              "displayName": "Q1_Current_Revenue",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Q2_12_Month_Goal",
+              "displayName": "Q2_12_Month_Goal",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Q3_DM_Permission",
+              "displayName": "Q3_DM_Permission",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "operator_action",
+              "displayName": "operator_action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "captured_at",
+              "displayName": "captured_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0007-4000-8000-000000000007",
+      "name": "Append Inbound",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        140,
+        480
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_SHEETS_SA_CREDENTIAL_ID",
+          "name": "Google Sheets — OPS-61 SA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "=Sub_WriteRowToSheet: unknown tab \"{{ $json.tab }}\". Must be one of: Loomless, JV_Targets, Terminator_Loom, Inbound"
+      },
+      "id": "a1b2c3d4-0008-4000-8000-000000000008",
+      "name": "Unknown Tab Error",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        140,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "numberInputs": 4,
+        "mode": "append"
+      },
+      "id": "a1b2c3d4-0009-4000-8000-000000000009",
+      "name": "Merge Branches",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        420,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// runOnceForEachItem: confirm the write and echo the originating tab back to\n// the caller (resolved via paired item, since the Sheets node output no longer\n// carries `tab`). Signature unchanged: { success, tab, row }.\nlet tab = null;\ntry { tab = $('When Called by Pipeline').item.json.tab; } catch (e) { tab = $json.tab ?? null; }\nreturn { json: { success: true, tab, row: $json } };"
+      },
+      "id": "a1b2c3d4-0010-4000-8000-000000000010",
       "name": "Return Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        300,
-        0
+        660,
+        240
       ]
     }
   ],
@@ -94,14 +716,97 @@
       "main": [
         [
           {
-            "node": "Append Row to Tab",
+            "node": "Route by Tab",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Append Row to Tab": {
+    "Route by Tab": {
+      "main": [
+        [
+          {
+            "node": "Append Loomless",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Append JV_Targets",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Append Terminator_Loom",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Append Inbound",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unknown Tab Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append Loomless": {
+      "main": [
+        [
+          {
+            "node": "Merge Branches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append JV_Targets": {
+      "main": [
+        [
+          {
+            "node": "Merge Branches",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Append Terminator_Loom": {
+      "main": [
+        [
+          {
+            "node": "Merge Branches",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Append Inbound": {
+      "main": [
+        [
+          {
+            "node": "Merge Branches",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Merge Branches": {
       "main": [
         [
           {
