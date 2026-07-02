@@ -1,0 +1,1066 @@
+{
+  "name": "OPS-61_Loomless_Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "triggerOn": "specificFolder",
+        "folderToWatch": {
+          "__rl": true,
+          "value": "REPLACE_WITH_Loomless_Inbox_FOLDER_ID",
+          "mode": "list",
+          "cachedResultName": "Loomless-Inbox"
+        },
+        "event": "fileCreated",
+        "options": {}
+      },
+      "id": "loomless-0001",
+      "name": "Watch Loomless-Inbox (.csv)",
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1560,
+        300
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_Google_SA_CREDENTIAL_ID",
+          "name": "Google Sheets — OPS-61 SA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "csv",
+              "leftValue": "={{ ($json.name || $json.fileName || '').toLowerCase() }}",
+              "rightValue": ".csv",
+              "operator": {
+                "type": "string",
+                "operation": "endsWith"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "loomless-0002",
+      "name": "Filter — .csv only",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        -1340,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "options": {
+          "binaryPropertyName": "data"
+        }
+      },
+      "id": "loomless-0003",
+      "name": "Download CSV",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -1120,
+        300
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_Google_SA_CREDENTIAL_ID",
+          "name": "Google Sheets — OPS-61 SA"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "csv",
+        "binaryPropertyName": "data",
+        "options": {}
+      },
+      "id": "loomless-0004",
+      "name": "Extract Rows from CSV",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        -900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\n// ---- shared helpers ----\nfunction s(v) { return v == null ? '' : String(v); }\nfunction leadHash(d) {\n  return s(d.Email || d.First_Name || 'lead').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toLowerCase();\n}\n\n// ---- MOCK Perplexity: returns the OpenAI-compatible chat-completions shape ----\n// The research object is a JSON *string* inside choices[0].message.content,\n// exactly as the real Perplexity API returns it.\nfunction mockPplx(lead) {\n  var scenario = s(lead._mock_scenario).trim().toLowerCase();\n  var first = s(lead.First_Name).trim();\n  var co = s(lead.Company_Name).trim();\n  var site = s(lead.Website).trim();\n  var content;\n  if (scenario === 'bad_research') {\n    content = '<<<PERPLEXITY_ERROR>>> upstream returned a non-JSON blob; this is deliberately unparseable';\n  } else if (scenario === 'no_context' || first.toLowerCase() === 'robert') {\n    content = JSON.stringify({\n      research_summary: 'No recent, specific, verifiable public context found for '\n        + (first || 'this lead') + ' at ' + (co || 'their company') + '.',\n      confidence: 'low',\n      source_hints: ['mock']\n    });\n  } else {\n    content = JSON.stringify({\n      research_summary: (first || 'The founder') + ' at ' + (co || 'the company')\n        + ' recently shared a notable milestone; ' + (site || 'their site')\n        + ' highlights a new offering worth referencing.',\n      confidence: 'high',\n      source_hints: ['mock:linkedin', 'mock:site']\n    });\n  }\n  return {\n    id: 'mock-pplx-' + leadHash(lead),\n    model: 'sonar',\n    choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: content } }],\n    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }\n  };\n}\n\n// ---- shared normalizer (question a): raw pplx shape -> research fields ----\n// Re-attaches the lead so downstream nodes have both the research + source cols.\nfunction normalizeResearch(raw, lead) {\n  var research_summary = '', confidence = 'low', _status = 'ok', _error = '';\n  try {\n    var contentStr = raw && raw.choices && raw.choices[0] && raw.choices[0].message\n      ? raw.choices[0].message.content : '';\n    var parsed = JSON.parse(contentStr);\n    research_summary = s(parsed.research_summary);\n    confidence = s(parsed.confidence == null ? 'low' : parsed.confidence).toLowerCase();\n  } catch (e) {\n    _status = 'dead';\n    _error = 'bad_research: Perplexity payload was not valid JSON';\n  }\n  return Object.assign({}, lead, {\n    research_summary: research_summary, confidence: confidence, _status: _status, _error: _error\n  });\n}\n\n// call Claude only when research is usable (mirrors the \"Call Claude?\" IF node)\nfunction shouldCallClaude(d) {\n  return d._status !== 'dead' && d.confidence !== 'low';\n}\n\n// low-confidence or dead-research short-circuit (no Claude call)\nfunction noContextLine(d) {\n  var line = d._status === 'dead' ? '' : '[NO_CONTEXT]';\n  return Object.assign({}, d, { Personalized_First_Line: line });\n}\n\n// ---- MOCK Anthropic: returns the Messages API shape; line in content[0].text -\nfunction mockAnthropic(d) {\n  var scenario = s(d._mock_scenario).trim().toLowerCase();\n  var text;\n  if (scenario === 'empty_line') {\n    text = '';\n  } else {\n    var who = d.First_Name ? d.First_Name : 'there';\n    var co = d.Company_Name ? d.Company_Name : 'your company';\n    text = 'Saw the recent milestone over at ' + co + ' — genuinely impressive work, ' + who + '.';\n  }\n  return {\n    id: 'msg_mock_' + leadHash(d),\n    type: 'message', role: 'assistant',\n    model: 'claude-sonnet-4-5-20250929',\n    content: [{ type: 'text', text: text }],\n    stop_reason: 'end_turn',\n    usage: { input_tokens: 0, output_tokens: 0 }\n  };\n}\n\n// ---- shared extractor (question a): raw anthropic shape -> first line ----\nfunction extractFirstLine(raw, norm) {\n  var text = '', _status = norm._status || 'ok', _error = norm._error || '';\n  try { text = s(raw.content[0].text); } catch (e) { text = ''; }\n  if (!text || !text.trim()) {\n    _status = 'dead';\n    _error = 'empty_line: model returned no first line';\n  }\n  return Object.assign({}, norm, { Personalized_First_Line: text, _status: _status, _error: _error });\n}\n\n// ---- the single choke point: build {tab,row} with ONLY the locked columns ----\n// [MOCK] prefixes the two LLM-output columns in mock mode, but NEVER wraps the\n// [NO_CONTEXT] sentinel (operators + verify_loomless_batch.py match it exactly)\n// and never a lone-prefix on empties.\nfunction buildRow(d, mode) {\n  var isMock = mode === 'mock';\n  var px = '[MOCK] ';\n  var status = d._status === 'dead' ? 'dead' : 'ready_for_review';\n  var rs = s(d.research_summary);\n  var line = s(d.Personalized_First_Line);\n  var research = (isMock && rs) ? px + rs : rs;\n  var isSentinel = line === '[NO_CONTEXT]';\n  var firstLine = (isMock && line && !isSentinel) ? px + line : line;\n  return { tab: 'Loomless', row: {\n      Company_Name: s(d.Company_Name),\n      Owner_Full_Name: s(d.Owner_Full_Name),\n      First_Name: s(d.First_Name),\n      Email: s(d.Email),\n      Website: s(d.Website),\n      Research_Summary: research,\n      Personalized_First_Line: firstLine,\n      status: status\n  } };\n}\n\n// ---- batch guard + fail-closed safety asserts (run once for all items) ----\nfunction guardCheck(rows, env) {\n  var REQUIRED = [\"Company_Name\", \"Owner_Full_Name\", \"First_Name\", \"Email\", \"Website\"];\n  var mode = s(env.LOOMLESS_MODE || 'mock');\n  var batchSize = parseInt(env.LOOMLESS_BATCH_SIZE || '100', 10);\n  var gsheet = s(env.GOOGLE_SHEET_ID);\n  var devsheet = s(env.LOOMLESS_DEV_SHEET_ID);\n  function err(reason, message, fields) {\n    return { ok: false, errorItem: {\n      _guard_error: 'yes', level: 'error', pipeline: 'loomless',\n      message: message, fields: Object.assign({ reason: reason, mode: mode }, fields || {})\n    } };\n  }\n  // layer-3 fail-closed dev-sheet guard: in mock mode, refuse unless the target\n  // Sheet IS the known dev Sheet (allowlist, not a pattern match).\n  if (mode === 'mock' && gsheet !== devsheet) {\n    return err('sheet_guard',\n      'Loomless batch REFUSED: mock mode but GOOGLE_SHEET_ID != LOOMLESS_DEV_SHEET_ID (fail-closed)',\n      { google_sheet_len: gsheet.length, dev_sheet_len: devsheet.length });\n  }\n  if (!rows || rows.length === 0) {\n    return err('empty_csv', 'Loomless batch rejected: CSV produced zero rows', { rows: 0 });\n  }\n  var first = rows[0] || {};\n  var missing = REQUIRED.filter(function (c) { return !(c in first); });\n  if (missing.length) {\n    return err('missing_columns',\n      'Loomless batch rejected: CSV missing required column(s): ' + missing.join(', '),\n      { missing: missing.join(','), got: Object.keys(first).join(',') });\n  }\n  if (rows.length > batchSize) {\n    return err('batch_too_large',\n      'Loomless batch rejected: ' + rows.length + ' rows exceeds LOOMLESS_BATCH_SIZE=' + batchSize,\n      { rows: rows.length, cap: batchSize });\n  }\n  return { ok: true };\n}\n\n// ---- aggregate write results into one Discord summary item ----\nfunction aggregate(rows, mode) {\n  var total = 0, ready = 0, noctx = 0, dead = 0;\n  for (var i = 0; i < rows.length; i++) {\n    var row = (rows[i] && rows[i].row) ? rows[i].row : rows[i]; // unwrap {success,tab,row}\n    total++;\n    var st = row.status;\n    var line = s(row.Personalized_First_Line).replace(/^\\[MOCK\\]\\s+/, '');\n    if (st === 'dead') { dead++; }\n    else { ready++; if (line.trim() === '[NO_CONTEXT]') { noctx++; } }\n  }\n  return {\n    level: 'info',\n    pipeline: 'loomless',\n    message: 'Loomless batch ready: ' + total + ' rows — ' + ready + ' ready_for_review ('\n      + noctx + ' [NO_CONTEXT]), ' + dead + ' dead [mode=' + mode + ']',\n    fields: { total: total, ready_for_review: ready, no_context: noctx, dead: dead, mode: mode }\n  };\n}\n\nconst items = $input.all();\nconst chk = guardCheck(items.map(i => i.json), $env);\nif (!chk.ok) { return [{ json: chk.errorItem }]; }\nreturn items;  // pass through unchanged (preserves pairedItem lineage)\n"
+      },
+      "id": "loomless-0005",
+      "name": "Guard — batch/columns/dev-sheet",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json._guard_error }}",
+              "rightValue": "yes",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "loomless-0006",
+      "name": "Guard failed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_Sub_NotifyDiscord_ID",
+          "mode": "list",
+          "cachedResultName": "Sub_NotifyDiscord"
+        },
+        "options": {}
+      },
+      "id": "loomless-0007",
+      "name": "Notify — batch rejected",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        -460,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "move",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $('Watch Loomless-Inbox (.csv)').first().json.id }}",
+          "mode": "id"
+        },
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list",
+          "cachedResultName": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_Loomless_Inbox_rejected_FOLDER_ID",
+          "mode": "list",
+          "cachedResultName": "rejected"
+        },
+        "options": {}
+      },
+      "id": "loomless-0027",
+      "name": "Move CSV → rejected/",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -240,
+        520
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_Google_SA_CREDENTIAL_ID",
+          "name": "Google Sheets — OPS-61 SA"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "={{ $json.message || 'Loomless batch rejected by guard' }}"
+      },
+      "id": "loomless-0008",
+      "name": "Stop — batch rejected",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        -20,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $env.LOOMLESS_MODE }}",
+              "rightValue": "live",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "loomless-0009",
+      "name": "Mode = live? (Perplexity)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.perplexity.ai/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.PERPLEXITY_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\"model\": \"sonar\", \"messages\": [{\"role\": \"system\", \"content\": \"You are a precise B2B research assistant. Search the live web and LinkedIn for RECENT, SPECIFIC, verifiable facts about a person and their company. Return ONLY a single JSON object: {\\\"research_summary\\\": string, \\\"confidence\\\": \\\"high\\\"|\\\"medium\\\"|\\\"low\\\", \\\"source_hints\\\": string[]}. Prefer facts from the last 30-60 days. If nothing specific and recent, set confidence to \\\"low\\\". Never invent.\"}, {\"role\": \"user\", \"content\": \"=Research this lead for a personalized cold-email opening line.\\\\n\\\\nFirst name: {{ $json.First_Name }}\\\\nFull name: {{ $json.Owner_Full_Name }}\\\\nCompany: {{ $json.Company_Name }}\\\\nWebsite: {{ $json.Website }}\\\\n\\\\nReturn the JSON object described in the system message. Nothing else.\"}]} }}",
+        "options": {}
+      },
+      "id": "loomless-0010",
+      "name": "HTTP — Perplexity (live)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -20,
+        180
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\n// ---- shared helpers ----\nfunction s(v) { return v == null ? '' : String(v); }\nfunction leadHash(d) {\n  return s(d.Email || d.First_Name || 'lead').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toLowerCase();\n}\n\n// ---- MOCK Perplexity: returns the OpenAI-compatible chat-completions shape ----\n// The research object is a JSON *string* inside choices[0].message.content,\n// exactly as the real Perplexity API returns it.\nfunction mockPplx(lead) {\n  var scenario = s(lead._mock_scenario).trim().toLowerCase();\n  var first = s(lead.First_Name).trim();\n  var co = s(lead.Company_Name).trim();\n  var site = s(lead.Website).trim();\n  var content;\n  if (scenario === 'bad_research') {\n    content = '<<<PERPLEXITY_ERROR>>> upstream returned a non-JSON blob; this is deliberately unparseable';\n  } else if (scenario === 'no_context' || first.toLowerCase() === 'robert') {\n    content = JSON.stringify({\n      research_summary: 'No recent, specific, verifiable public context found for '\n        + (first || 'this lead') + ' at ' + (co || 'their company') + '.',\n      confidence: 'low',\n      source_hints: ['mock']\n    });\n  } else {\n    content = JSON.stringify({\n      research_summary: (first || 'The founder') + ' at ' + (co || 'the company')\n        + ' recently shared a notable milestone; ' + (site || 'their site')\n        + ' highlights a new offering worth referencing.',\n      confidence: 'high',\n      source_hints: ['mock:linkedin', 'mock:site']\n    });\n  }\n  return {\n    id: 'mock-pplx-' + leadHash(lead),\n    model: 'sonar',\n    choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: content } }],\n    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }\n  };\n}\n\n// ---- shared normalizer (question a): raw pplx shape -> research fields ----\n// Re-attaches the lead so downstream nodes have both the research + source cols.\nfunction normalizeResearch(raw, lead) {\n  var research_summary = '', confidence = 'low', _status = 'ok', _error = '';\n  try {\n    var contentStr = raw && raw.choices && raw.choices[0] && raw.choices[0].message\n      ? raw.choices[0].message.content : '';\n    var parsed = JSON.parse(contentStr);\n    research_summary = s(parsed.research_summary);\n    confidence = s(parsed.confidence == null ? 'low' : parsed.confidence).toLowerCase();\n  } catch (e) {\n    _status = 'dead';\n    _error = 'bad_research: Perplexity payload was not valid JSON';\n  }\n  return Object.assign({}, lead, {\n    research_summary: research_summary, confidence: confidence, _status: _status, _error: _error\n  });\n}\n\n// call Claude only when research is usable (mirrors the \"Call Claude?\" IF node)\nfunction shouldCallClaude(d) {\n  return d._status !== 'dead' && d.confidence !== 'low';\n}\n\n// low-confidence or dead-research short-circuit (no Claude call)\nfunction noContextLine(d) {\n  var line = d._status === 'dead' ? '' : '[NO_CONTEXT]';\n  return Object.assign({}, d, { Personalized_First_Line: line });\n}\n\n// ---- MOCK Anthropic: returns the Messages API shape; line in content[0].text -\nfunction mockAnthropic(d) {\n  var scenario = s(d._mock_scenario).trim().toLowerCase();\n  var text;\n  if (scenario === 'empty_line') {\n    text = '';\n  } else {\n    var who = d.First_Name ? d.First_Name : 'there';\n    var co = d.Company_Name ? d.Company_Name : 'your company';\n    text = 'Saw the recent milestone over at ' + co + ' — genuinely impressive work, ' + who + '.';\n  }\n  return {\n    id: 'msg_mock_' + leadHash(d),\n    type: 'message', role: 'assistant',\n    model: 'claude-sonnet-4-5-20250929',\n    content: [{ type: 'text', text: text }],\n    stop_reason: 'end_turn',\n    usage: { input_tokens: 0, output_tokens: 0 }\n  };\n}\n\n// ---- shared extractor (question a): raw anthropic shape -> first line ----\nfunction extractFirstLine(raw, norm) {\n  var text = '', _status = norm._status || 'ok', _error = norm._error || '';\n  try { text = s(raw.content[0].text); } catch (e) { text = ''; }\n  if (!text || !text.trim()) {\n    _status = 'dead';\n    _error = 'empty_line: model returned no first line';\n  }\n  return Object.assign({}, norm, { Personalized_First_Line: text, _status: _status, _error: _error });\n}\n\n// ---- the single choke point: build {tab,row} with ONLY the locked columns ----\n// [MOCK] prefixes the two LLM-output columns in mock mode, but NEVER wraps the\n// [NO_CONTEXT] sentinel (operators + verify_loomless_batch.py match it exactly)\n// and never a lone-prefix on empties.\nfunction buildRow(d, mode) {\n  var isMock = mode === 'mock';\n  var px = '[MOCK] ';\n  var status = d._status === 'dead' ? 'dead' : 'ready_for_review';\n  var rs = s(d.research_summary);\n  var line = s(d.Personalized_First_Line);\n  var research = (isMock && rs) ? px + rs : rs;\n  var isSentinel = line === '[NO_CONTEXT]';\n  var firstLine = (isMock && line && !isSentinel) ? px + line : line;\n  return { tab: 'Loomless', row: {\n      Company_Name: s(d.Company_Name),\n      Owner_Full_Name: s(d.Owner_Full_Name),\n      First_Name: s(d.First_Name),\n      Email: s(d.Email),\n      Website: s(d.Website),\n      Research_Summary: research,\n      Personalized_First_Line: firstLine,\n      status: status\n  } };\n}\n\n// ---- batch guard + fail-closed safety asserts (run once for all items) ----\nfunction guardCheck(rows, env) {\n  var REQUIRED = [\"Company_Name\", \"Owner_Full_Name\", \"First_Name\", \"Email\", \"Website\"];\n  var mode = s(env.LOOMLESS_MODE || 'mock');\n  var batchSize = parseInt(env.LOOMLESS_BATCH_SIZE || '100', 10);\n  var gsheet = s(env.GOOGLE_SHEET_ID);\n  var devsheet = s(env.LOOMLESS_DEV_SHEET_ID);\n  function err(reason, message, fields) {\n    return { ok: false, errorItem: {\n      _guard_error: 'yes', level: 'error', pipeline: 'loomless',\n      message: message, fields: Object.assign({ reason: reason, mode: mode }, fields || {})\n    } };\n  }\n  // layer-3 fail-closed dev-sheet guard: in mock mode, refuse unless the target\n  // Sheet IS the known dev Sheet (allowlist, not a pattern match).\n  if (mode === 'mock' && gsheet !== devsheet) {\n    return err('sheet_guard',\n      'Loomless batch REFUSED: mock mode but GOOGLE_SHEET_ID != LOOMLESS_DEV_SHEET_ID (fail-closed)',\n      { google_sheet_len: gsheet.length, dev_sheet_len: devsheet.length });\n  }\n  if (!rows || rows.length === 0) {\n    return err('empty_csv', 'Loomless batch rejected: CSV produced zero rows', { rows: 0 });\n  }\n  var first = rows[0] || {};\n  var missing = REQUIRED.filter(function (c) { return !(c in first); });\n  if (missing.length) {\n    return err('missing_columns',\n      'Loomless batch rejected: CSV missing required column(s): ' + missing.join(', '),\n      { missing: missing.join(','), got: Object.keys(first).join(',') });\n  }\n  if (rows.length > batchSize) {\n    return err('batch_too_large',\n      'Loomless batch rejected: ' + rows.length + ' rows exceeds LOOMLESS_BATCH_SIZE=' + batchSize,\n      { rows: rows.length, cap: batchSize });\n  }\n  return { ok: true };\n}\n\n// ---- aggregate write results into one Discord summary item ----\nfunction aggregate(rows, mode) {\n  var total = 0, ready = 0, noctx = 0, dead = 0;\n  for (var i = 0; i < rows.length; i++) {\n    var row = (rows[i] && rows[i].row) ? rows[i].row : rows[i]; // unwrap {success,tab,row}\n    total++;\n    var st = row.status;\n    var line = s(row.Personalized_First_Line).replace(/^\\[MOCK\\]\\s+/, '');\n    if (st === 'dead') { dead++; }\n    else { ready++; if (line.trim() === '[NO_CONTEXT]') { noctx++; } }\n  }\n  return {\n    level: 'info',\n    pipeline: 'loomless',\n    message: 'Loomless batch ready: ' + total + ' rows — ' + ready + ' ready_for_review ('\n      + noctx + ' [NO_CONTEXT]), ' + dead + ' dead [mode=' + mode + ']',\n    fields: { total: total, ready_for_review: ready, no_context: noctx, dead: dead, mode: mode }\n  };\n}\n\nreturn { json: mockPplx($json) };\n"
+      },
+      "id": "loomless-0011",
+      "name": "Mock — Perplexity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -20,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "numberInputs": 2,
+        "mode": "append"
+      },
+      "id": "loomless-0012",
+      "name": "Merge — Perplexity paths",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\n// ---- shared helpers ----\nfunction s(v) { return v == null ? '' : String(v); }\nfunction leadHash(d) {\n  return s(d.Email || d.First_Name || 'lead').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toLowerCase();\n}\n\n// ---- MOCK Perplexity: returns the OpenAI-compatible chat-completions shape ----\n// The research object is a JSON *string* inside choices[0].message.content,\n// exactly as the real Perplexity API returns it.\nfunction mockPplx(lead) {\n  var scenario = s(lead._mock_scenario).trim().toLowerCase();\n  var first = s(lead.First_Name).trim();\n  var co = s(lead.Company_Name).trim();\n  var site = s(lead.Website).trim();\n  var content;\n  if (scenario === 'bad_research') {\n    content = '<<<PERPLEXITY_ERROR>>> upstream returned a non-JSON blob; this is deliberately unparseable';\n  } else if (scenario === 'no_context' || first.toLowerCase() === 'robert') {\n    content = JSON.stringify({\n      research_summary: 'No recent, specific, verifiable public context found for '\n        + (first || 'this lead') + ' at ' + (co || 'their company') + '.',\n      confidence: 'low',\n      source_hints: ['mock']\n    });\n  } else {\n    content = JSON.stringify({\n      research_summary: (first || 'The founder') + ' at ' + (co || 'the company')\n        + ' recently shared a notable milestone; ' + (site || 'their site')\n        + ' highlights a new offering worth referencing.',\n      confidence: 'high',\n      source_hints: ['mock:linkedin', 'mock:site']\n    });\n  }\n  return {\n    id: 'mock-pplx-' + leadHash(lead),\n    model: 'sonar',\n    choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: content } }],\n    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }\n  };\n}\n\n// ---- shared normalizer (question a): raw pplx shape -> research fields ----\n// Re-attaches the lead so downstream nodes have both the research + source cols.\nfunction normalizeResearch(raw, lead) {\n  var research_summary = '', confidence = 'low', _status = 'ok', _error = '';\n  try {\n    var contentStr = raw && raw.choices && raw.choices[0] && raw.choices[0].message\n      ? raw.choices[0].message.content : '';\n    var parsed = JSON.parse(contentStr);\n    research_summary = s(parsed.research_summary);\n    confidence = s(parsed.confidence == null ? 'low' : parsed.confidence).toLowerCase();\n  } catch (e) {\n    _status = 'dead';\n    _error = 'bad_research: Perplexity payload was not valid JSON';\n  }\n  return Object.assign({}, lead, {\n    research_summary: research_summary, confidence: confidence, _status: _status, _error: _error\n  });\n}\n\n// call Claude only when research is usable (mirrors the \"Call Claude?\" IF node)\nfunction shouldCallClaude(d) {\n  return d._status !== 'dead' && d.confidence !== 'low';\n}\n\n// low-confidence or dead-research short-circuit (no Claude call)\nfunction noContextLine(d) {\n  var line = d._status === 'dead' ? '' : '[NO_CONTEXT]';\n  return Object.assign({}, d, { Personalized_First_Line: line });\n}\n\n// ---- MOCK Anthropic: returns the Messages API shape; line in content[0].text -\nfunction mockAnthropic(d) {\n  var scenario = s(d._mock_scenario).trim().toLowerCase();\n  var text;\n  if (scenario === 'empty_line') {\n    text = '';\n  } else {\n    var who = d.First_Name ? d.First_Name : 'there';\n    var co = d.Company_Name ? d.Company_Name : 'your company';\n    text = 'Saw the recent milestone over at ' + co + ' — genuinely impressive work, ' + who + '.';\n  }\n  return {\n    id: 'msg_mock_' + leadHash(d),\n    type: 'message', role: 'assistant',\n    model: 'claude-sonnet-4-5-20250929',\n    content: [{ type: 'text', text: text }],\n    stop_reason: 'end_turn',\n    usage: { input_tokens: 0, output_tokens: 0 }\n  };\n}\n\n// ---- shared extractor (question a): raw anthropic shape -> first line ----\nfunction extractFirstLine(raw, norm) {\n  var text = '', _status = norm._status || 'ok', _error = norm._error || '';\n  try { text = s(raw.content[0].text); } catch (e) { text = ''; }\n  if (!text || !text.trim()) {\n    _status = 'dead';\n    _error = 'empty_line: model returned no first line';\n  }\n  return Object.assign({}, norm, { Personalized_First_Line: text, _status: _status, _error: _error });\n}\n\n// ---- the single choke point: build {tab,row} with ONLY the locked columns ----\n// [MOCK] prefixes the two LLM-output columns in mock mode, but NEVER wraps the\n// [NO_CONTEXT] sentinel (operators + verify_loomless_batch.py match it exactly)\n// and never a lone-prefix on empties.\nfunction buildRow(d, mode) {\n  var isMock = mode === 'mock';\n  var px = '[MOCK] ';\n  var status = d._status === 'dead' ? 'dead' : 'ready_for_review';\n  var rs = s(d.research_summary);\n  var line = s(d.Personalized_First_Line);\n  var research = (isMock && rs) ? px + rs : rs;\n  var isSentinel = line === '[NO_CONTEXT]';\n  var firstLine = (isMock && line && !isSentinel) ? px + line : line;\n  return { tab: 'Loomless', row: {\n      Company_Name: s(d.Company_Name),\n      Owner_Full_Name: s(d.Owner_Full_Name),\n      First_Name: s(d.First_Name),\n      Email: s(d.Email),\n      Website: s(d.Website),\n      Research_Summary: research,\n      Personalized_First_Line: firstLine,\n      status: status\n  } };\n}\n\n// ---- batch guard + fail-closed safety asserts (run once for all items) ----\nfunction guardCheck(rows, env) {\n  var REQUIRED = [\"Company_Name\", \"Owner_Full_Name\", \"First_Name\", \"Email\", \"Website\"];\n  var mode = s(env.LOOMLESS_MODE || 'mock');\n  var batchSize = parseInt(env.LOOMLESS_BATCH_SIZE || '100', 10);\n  var gsheet = s(env.GOOGLE_SHEET_ID);\n  var devsheet = s(env.LOOMLESS_DEV_SHEET_ID);\n  function err(reason, message, fields) {\n    return { ok: false, errorItem: {\n      _guard_error: 'yes', level: 'error', pipeline: 'loomless',\n      message: message, fields: Object.assign({ reason: reason, mode: mode }, fields || {})\n    } };\n  }\n  // layer-3 fail-closed dev-sheet guard: in mock mode, refuse unless the target\n  // Sheet IS the known dev Sheet (allowlist, not a pattern match).\n  if (mode === 'mock' && gsheet !== devsheet) {\n    return err('sheet_guard',\n      'Loomless batch REFUSED: mock mode but GOOGLE_SHEET_ID != LOOMLESS_DEV_SHEET_ID (fail-closed)',\n      { google_sheet_len: gsheet.length, dev_sheet_len: devsheet.length });\n  }\n  if (!rows || rows.length === 0) {\n    return err('empty_csv', 'Loomless batch rejected: CSV produced zero rows', { rows: 0 });\n  }\n  var first = rows[0] || {};\n  var missing = REQUIRED.filter(function (c) { return !(c in first); });\n  if (missing.length) {\n    return err('missing_columns',\n      'Loomless batch rejected: CSV missing required column(s): ' + missing.join(', '),\n      { missing: missing.join(','), got: Object.keys(first).join(',') });\n  }\n  if (rows.length > batchSize) {\n    return err('batch_too_large',\n      'Loomless batch rejected: ' + rows.length + ' rows exceeds LOOMLESS_BATCH_SIZE=' + batchSize,\n      { rows: rows.length, cap: batchSize });\n  }\n  return { ok: true };\n}\n\n// ---- aggregate write results into one Discord summary item ----\nfunction aggregate(rows, mode) {\n  var total = 0, ready = 0, noctx = 0, dead = 0;\n  for (var i = 0; i < rows.length; i++) {\n    var row = (rows[i] && rows[i].row) ? rows[i].row : rows[i]; // unwrap {success,tab,row}\n    total++;\n    var st = row.status;\n    var line = s(row.Personalized_First_Line).replace(/^\\[MOCK\\]\\s+/, '');\n    if (st === 'dead') { dead++; }\n    else { ready++; if (line.trim() === '[NO_CONTEXT]') { noctx++; } }\n  }\n  return {\n    level: 'info',\n    pipeline: 'loomless',\n    message: 'Loomless batch ready: ' + total + ' rows — ' + ready + ' ready_for_review ('\n      + noctx + ' [NO_CONTEXT]), ' + dead + ' dead [mode=' + mode + ']',\n    fields: { total: total, ready_for_review: ready, no_context: noctx, dead: dead, mode: mode }\n  };\n}\n\nconst lead = $('Extract Rows from CSV').item.json;\nreturn { json: normalizeResearch($json, lead) };\n"
+      },
+      "id": "loomless-0013",
+      "name": "Normalize Research",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json._status }}",
+              "rightValue": "dead",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "id": "c2",
+              "leftValue": "={{ $json.confidence }}",
+              "rightValue": "low",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "loomless-0014",
+      "name": "Call Claude?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\n// ---- shared helpers ----\nfunction s(v) { return v == null ? '' : String(v); }\nfunction leadHash(d) {\n  return s(d.Email || d.First_Name || 'lead').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toLowerCase();\n}\n\n// ---- MOCK Perplexity: returns the OpenAI-compatible chat-completions shape ----\n// The research object is a JSON *string* inside choices[0].message.content,\n// exactly as the real Perplexity API returns it.\nfunction mockPplx(lead) {\n  var scenario = s(lead._mock_scenario).trim().toLowerCase();\n  var first = s(lead.First_Name).trim();\n  var co = s(lead.Company_Name).trim();\n  var site = s(lead.Website).trim();\n  var content;\n  if (scenario === 'bad_research') {\n    content = '<<<PERPLEXITY_ERROR>>> upstream returned a non-JSON blob; this is deliberately unparseable';\n  } else if (scenario === 'no_context' || first.toLowerCase() === 'robert') {\n    content = JSON.stringify({\n      research_summary: 'No recent, specific, verifiable public context found for '\n        + (first || 'this lead') + ' at ' + (co || 'their company') + '.',\n      confidence: 'low',\n      source_hints: ['mock']\n    });\n  } else {\n    content = JSON.stringify({\n      research_summary: (first || 'The founder') + ' at ' + (co || 'the company')\n        + ' recently shared a notable milestone; ' + (site || 'their site')\n        + ' highlights a new offering worth referencing.',\n      confidence: 'high',\n      source_hints: ['mock:linkedin', 'mock:site']\n    });\n  }\n  return {\n    id: 'mock-pplx-' + leadHash(lead),\n    model: 'sonar',\n    choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: content } }],\n    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }\n  };\n}\n\n// ---- shared normalizer (question a): raw pplx shape -> research fields ----\n// Re-attaches the lead so downstream nodes have both the research + source cols.\nfunction normalizeResearch(raw, lead) {\n  var research_summary = '', confidence = 'low', _status = 'ok', _error = '';\n  try {\n    var contentStr = raw && raw.choices && raw.choices[0] && raw.choices[0].message\n      ? raw.choices[0].message.content : '';\n    var parsed = JSON.parse(contentStr);\n    research_summary = s(parsed.research_summary);\n    confidence = s(parsed.confidence == null ? 'low' : parsed.confidence).toLowerCase();\n  } catch (e) {\n    _status = 'dead';\n    _error = 'bad_research: Perplexity payload was not valid JSON';\n  }\n  return Object.assign({}, lead, {\n    research_summary: research_summary, confidence: confidence, _status: _status, _error: _error\n  });\n}\n\n// call Claude only when research is usable (mirrors the \"Call Claude?\" IF node)\nfunction shouldCallClaude(d) {\n  return d._status !== 'dead' && d.confidence !== 'low';\n}\n\n// low-confidence or dead-research short-circuit (no Claude call)\nfunction noContextLine(d) {\n  var line = d._status === 'dead' ? '' : '[NO_CONTEXT]';\n  return Object.assign({}, d, { Personalized_First_Line: line });\n}\n\n// ---- MOCK Anthropic: returns the Messages API shape; line in content[0].text -\nfunction mockAnthropic(d) {\n  var scenario = s(d._mock_scenario).trim().toLowerCase();\n  var text;\n  if (scenario === 'empty_line') {\n    text = '';\n  } else {\n    var who = d.First_Name ? d.First_Name : 'there';\n    var co = d.Company_Name ? d.Company_Name : 'your company';\n    text = 'Saw the recent milestone over at ' + co + ' — genuinely impressive work, ' + who + '.';\n  }\n  return {\n    id: 'msg_mock_' + leadHash(d),\n    type: 'message', role: 'assistant',\n    model: 'claude-sonnet-4-5-20250929',\n    content: [{ type: 'text', text: text }],\n    stop_reason: 'end_turn',\n    usage: { input_tokens: 0, output_tokens: 0 }\n  };\n}\n\n// ---- shared extractor (question a): raw anthropic shape -> first line ----\nfunction extractFirstLine(raw, norm) {\n  var text = '', _status = norm._status || 'ok', _error = norm._error || '';\n  try { text = s(raw.content[0].text); } catch (e) { text = ''; }\n  if (!text || !text.trim()) {\n    _status = 'dead';\n    _error = 'empty_line: model returned no first line';\n  }\n  return Object.assign({}, norm, { Personalized_First_Line: text, _status: _status, _error: _error });\n}\n\n// ---- the single choke point: build {tab,row} with ONLY the locked columns ----\n// [MOCK] prefixes the two LLM-output columns in mock mode, but NEVER wraps the\n// [NO_CONTEXT] sentinel (operators + verify_loomless_batch.py match it exactly)\n// and never a lone-prefix on empties.\nfunction buildRow(d, mode) {\n  var isMock = mode === 'mock';\n  var px = '[MOCK] ';\n  var status = d._status === 'dead' ? 'dead' : 'ready_for_review';\n  var rs = s(d.research_summary);\n  var line = s(d.Personalized_First_Line);\n  var research = (isMock && rs) ? px + rs : rs;\n  var isSentinel = line === '[NO_CONTEXT]';\n  var firstLine = (isMock && line && !isSentinel) ? px + line : line;\n  return { tab: 'Loomless', row: {\n      Company_Name: s(d.Company_Name),\n      Owner_Full_Name: s(d.Owner_Full_Name),\n      First_Name: s(d.First_Name),\n      Email: s(d.Email),\n      Website: s(d.Website),\n      Research_Summary: research,\n      Personalized_First_Line: firstLine,\n      status: status\n  } };\n}\n\n// ---- batch guard + fail-closed safety asserts (run once for all items) ----\nfunction guardCheck(rows, env) {\n  var REQUIRED = [\"Company_Name\", \"Owner_Full_Name\", \"First_Name\", \"Email\", \"Website\"];\n  var mode = s(env.LOOMLESS_MODE || 'mock');\n  var batchSize = parseInt(env.LOOMLESS_BATCH_SIZE || '100', 10);\n  var gsheet = s(env.GOOGLE_SHEET_ID);\n  var devsheet = s(env.LOOMLESS_DEV_SHEET_ID);\n  function err(reason, message, fields) {\n    return { ok: false, errorItem: {\n      _guard_error: 'yes', level: 'error', pipeline: 'loomless',\n      message: message, fields: Object.assign({ reason: reason, mode: mode }, fields || {})\n    } };\n  }\n  // layer-3 fail-closed dev-sheet guard: in mock mode, refuse unless the target\n  // Sheet IS the known dev Sheet (allowlist, not a pattern match).\n  if (mode === 'mock' && gsheet !== devsheet) {\n    return err('sheet_guard',\n      'Loomless batch REFUSED: mock mode but GOOGLE_SHEET_ID != LOOMLESS_DEV_SHEET_ID (fail-closed)',\n      { google_sheet_len: gsheet.length, dev_sheet_len: devsheet.length });\n  }\n  if (!rows || rows.length === 0) {\n    return err('empty_csv', 'Loomless batch rejected: CSV produced zero rows', { rows: 0 });\n  }\n  var first = rows[0] || {};\n  var missing = REQUIRED.filter(function (c) { return !(c in first); });\n  if (missing.length) {\n    return err('missing_columns',\n      'Loomless batch rejected: CSV missing required column(s): ' + missing.join(', '),\n      { missing: missing.join(','), got: Object.keys(first).join(',') });\n  }\n  if (rows.length > batchSize) {\n    return err('batch_too_large',\n      'Loomless batch rejected: ' + rows.length + ' rows exceeds LOOMLESS_BATCH_SIZE=' + batchSize,\n      { rows: rows.length, cap: batchSize });\n  }\n  return { ok: true };\n}\n\n// ---- aggregate write results into one Discord summary item ----\nfunction aggregate(rows, mode) {\n  var total = 0, ready = 0, noctx = 0, dead = 0;\n  for (var i = 0; i < rows.length; i++) {\n    var row = (rows[i] && rows[i].row) ? rows[i].row : rows[i]; // unwrap {success,tab,row}\n    total++;\n    var st = row.status;\n    var line = s(row.Personalized_First_Line).replace(/^\\[MOCK\\]\\s+/, '');\n    if (st === 'dead') { dead++; }\n    else { ready++; if (line.trim() === '[NO_CONTEXT]') { noctx++; } }\n  }\n  return {\n    level: 'info',\n    pipeline: 'loomless',\n    message: 'Loomless batch ready: ' + total + ' rows — ' + ready + ' ready_for_review ('\n      + noctx + ' [NO_CONTEXT]), ' + dead + ' dead [mode=' + mode + ']',\n    fields: { total: total, ready_for_review: ready, no_context: noctx, dead: dead, mode: mode }\n  };\n}\n\nreturn { json: noContextLine($json) };\n"
+      },
+      "id": "loomless-0015",
+      "name": "Set — [NO_CONTEXT] / dead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $env.LOOMLESS_MODE }}",
+              "rightValue": "live",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "loomless-0016",
+      "name": "Mode = live? (Anthropic)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        860,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.ANTHROPIC_API_KEY }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\"model\": \"claude-sonnet-4-5-20250929\", \"max_tokens\": 120, \"system\": \"You are an expert cold-email copywriter (EasyGrow \\\"Loomless\\\"). Write ONE first line: one sentence, under 30 words, conversational, referencing the SPECIFIC research context (paraphrased, never quoted). No marketing-speak, no emojis. If the research has no usable specific context, respond with exactly [NO_CONTEXT] and nothing else. Output ONLY the line.\", \"messages\": [{\"role\": \"user\", \"content\": \"=Lead first name: {{ $json.First_Name }}\\\\nCompany: {{ $json.Company_Name }}\\\\n\\\\nResearch summary (from live web/LinkedIn research):\\\\n{{ $json.research_summary }}\\\\n\\\\nWrite the first line.\"}]} }}",
+        "options": {}
+      },
+      "id": "loomless-0017",
+      "name": "HTTP — Anthropic (live)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1080,
+        120
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\n// ---- shared helpers ----\nfunction s(v) { return v == null ? '' : String(v); }\nfunction leadHash(d) {\n  return s(d.Email || d.First_Name || 'lead').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toLowerCase();\n}\n\n// ---- MOCK Perplexity: returns the OpenAI-compatible chat-completions shape ----\n// The research object is a JSON *string* inside choices[0].message.content,\n// exactly as the real Perplexity API returns it.\nfunction mockPplx(lead) {\n  var scenario = s(lead._mock_scenario).trim().toLowerCase();\n  var first = s(lead.First_Name).trim();\n  var co = s(lead.Company_Name).trim();\n  var site = s(lead.Website).trim();\n  var content;\n  if (scenario === 'bad_research') {\n    content = '<<<PERPLEXITY_ERROR>>> upstream returned a non-JSON blob; this is deliberately unparseable';\n  } else if (scenario === 'no_context' || first.toLowerCase() === 'robert') {\n    content = JSON.stringify({\n      research_summary: 'No recent, specific, verifiable public context found for '\n        + (first || 'this lead') + ' at ' + (co || 'their company') + '.',\n      confidence: 'low',\n      source_hints: ['mock']\n    });\n  } else {\n    content = JSON.stringify({\n      research_summary: (first || 'The founder') + ' at ' + (co || 'the company')\n        + ' recently shared a notable milestone; ' + (site || 'their site')\n        + ' highlights a new offering worth referencing.',\n      confidence: 'high',\n      source_hints: ['mock:linkedin', 'mock:site']\n    });\n  }\n  return {\n    id: 'mock-pplx-' + leadHash(lead),\n    model: 'sonar',\n    choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: content } }],\n    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }\n  };\n}\n\n// ---- shared normalizer (question a): raw pplx shape -> research fields ----\n// Re-attaches the lead so downstream nodes have both the research + source cols.\nfunction normalizeResearch(raw, lead) {\n  var research_summary = '', confidence = 'low', _status = 'ok', _error = '';\n  try {\n    var contentStr = raw && raw.choices && raw.choices[0] && raw.choices[0].message\n      ? raw.choices[0].message.content : '';\n    var parsed = JSON.parse(contentStr);\n    research_summary = s(parsed.research_summary);\n    confidence = s(parsed.confidence == null ? 'low' : parsed.confidence).toLowerCase();\n  } catch (e) {\n    _status = 'dead';\n    _error = 'bad_research: Perplexity payload was not valid JSON';\n  }\n  return Object.assign({}, lead, {\n    research_summary: research_summary, confidence: confidence, _status: _status, _error: _error\n  });\n}\n\n// call Claude only when research is usable (mirrors the \"Call Claude?\" IF node)\nfunction shouldCallClaude(d) {\n  return d._status !== 'dead' && d.confidence !== 'low';\n}\n\n// low-confidence or dead-research short-circuit (no Claude call)\nfunction noContextLine(d) {\n  var line = d._status === 'dead' ? '' : '[NO_CONTEXT]';\n  return Object.assign({}, d, { Personalized_First_Line: line });\n}\n\n// ---- MOCK Anthropic: returns the Messages API shape; line in content[0].text -\nfunction mockAnthropic(d) {\n  var scenario = s(d._mock_scenario).trim().toLowerCase();\n  var text;\n  if (scenario === 'empty_line') {\n    text = '';\n  } else {\n    var who = d.First_Name ? d.First_Name : 'there';\n    var co = d.Company_Name ? d.Company_Name : 'your company';\n    text = 'Saw the recent milestone over at ' + co + ' — genuinely impressive work, ' + who + '.';\n  }\n  return {\n    id: 'msg_mock_' + leadHash(d),\n    type: 'message', role: 'assistant',\n    model: 'claude-sonnet-4-5-20250929',\n    content: [{ type: 'text', text: text }],\n    stop_reason: 'end_turn',\n    usage: { input_tokens: 0, output_tokens: 0 }\n  };\n}\n\n// ---- shared extractor (question a): raw anthropic shape -> first line ----\nfunction extractFirstLine(raw, norm) {\n  var text = '', _status = norm._status || 'ok', _error = norm._error || '';\n  try { text = s(raw.content[0].text); } catch (e) { text = ''; }\n  if (!text || !text.trim()) {\n    _status = 'dead';\n    _error = 'empty_line: model returned no first line';\n  }\n  return Object.assign({}, norm, { Personalized_First_Line: text, _status: _status, _error: _error });\n}\n\n// ---- the single choke point: build {tab,row} with ONLY the locked columns ----\n// [MOCK] prefixes the two LLM-output columns in mock mode, but NEVER wraps the\n// [NO_CONTEXT] sentinel (operators + verify_loomless_batch.py match it exactly)\n// and never a lone-prefix on empties.\nfunction buildRow(d, mode) {\n  var isMock = mode === 'mock';\n  var px = '[MOCK] ';\n  var status = d._status === 'dead' ? 'dead' : 'ready_for_review';\n  var rs = s(d.research_summary);\n  var line = s(d.Personalized_First_Line);\n  var research = (isMock && rs) ? px + rs : rs;\n  var isSentinel = line === '[NO_CONTEXT]';\n  var firstLine = (isMock && line && !isSentinel) ? px + line : line;\n  return { tab: 'Loomless', row: {\n      Company_Name: s(d.Company_Name),\n      Owner_Full_Name: s(d.Owner_Full_Name),\n      First_Name: s(d.First_Name),\n      Email: s(d.Email),\n      Website: s(d.Website),\n      Research_Summary: research,\n      Personalized_First_Line: firstLine,\n      status: status\n  } };\n}\n\n// ---- batch guard + fail-closed safety asserts (run once for all items) ----\nfunction guardCheck(rows, env) {\n  var REQUIRED = [\"Company_Name\", \"Owner_Full_Name\", \"First_Name\", \"Email\", \"Website\"];\n  var mode = s(env.LOOMLESS_MODE || 'mock');\n  var batchSize = parseInt(env.LOOMLESS_BATCH_SIZE || '100', 10);\n  var gsheet = s(env.GOOGLE_SHEET_ID);\n  var devsheet = s(env.LOOMLESS_DEV_SHEET_ID);\n  function err(reason, message, fields) {\n    return { ok: false, errorItem: {\n      _guard_error: 'yes', level: 'error', pipeline: 'loomless',\n      message: message, fields: Object.assign({ reason: reason, mode: mode }, fields || {})\n    } };\n  }\n  // layer-3 fail-closed dev-sheet guard: in mock mode, refuse unless the target\n  // Sheet IS the known dev Sheet (allowlist, not a pattern match).\n  if (mode === 'mock' && gsheet !== devsheet) {\n    return err('sheet_guard',\n      'Loomless batch REFUSED: mock mode but GOOGLE_SHEET_ID != LOOMLESS_DEV_SHEET_ID (fail-closed)',\n      { google_sheet_len: gsheet.length, dev_sheet_len: devsheet.length });\n  }\n  if (!rows || rows.length === 0) {\n    return err('empty_csv', 'Loomless batch rejected: CSV produced zero rows', { rows: 0 });\n  }\n  var first = rows[0] || {};\n  var missing = REQUIRED.filter(function (c) { return !(c in first); });\n  if (missing.length) {\n    return err('missing_columns',\n      'Loomless batch rejected: CSV missing required column(s): ' + missing.join(', '),\n      { missing: missing.join(','), got: Object.keys(first).join(',') });\n  }\n  if (rows.length > batchSize) {\n    return err('batch_too_large',\n      'Loomless batch rejected: ' + rows.length + ' rows exceeds LOOMLESS_BATCH_SIZE=' + batchSize,\n      { rows: rows.length, cap: batchSize });\n  }\n  return { ok: true };\n}\n\n// ---- aggregate write results into one Discord summary item ----\nfunction aggregate(rows, mode) {\n  var total = 0, ready = 0, noctx = 0, dead = 0;\n  for (var i = 0; i < rows.length; i++) {\n    var row = (rows[i] && rows[i].row) ? rows[i].row : rows[i]; // unwrap {success,tab,row}\n    total++;\n    var st = row.status;\n    var line = s(row.Personalized_First_Line).replace(/^\\[MOCK\\]\\s+/, '');\n    if (st === 'dead') { dead++; }\n    else { ready++; if (line.trim() === '[NO_CONTEXT]') { noctx++; } }\n  }\n  return {\n    level: 'info',\n    pipeline: 'loomless',\n    message: 'Loomless batch ready: ' + total + ' rows — ' + ready + ' ready_for_review ('\n      + noctx + ' [NO_CONTEXT]), ' + dead + ' dead [mode=' + mode + ']',\n    fields: { total: total, ready_for_review: ready, no_context: noctx, dead: dead, mode: mode }\n  };\n}\n\nreturn { json: mockAnthropic($json) };\n"
+      },
+      "id": "loomless-0018",
+      "name": "Mock — Anthropic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "numberInputs": 2,
+        "mode": "append"
+      },
+      "id": "loomless-0019",
+      "name": "Merge — Anthropic paths",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1300,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\n// ---- shared helpers ----\nfunction s(v) { return v == null ? '' : String(v); }\nfunction leadHash(d) {\n  return s(d.Email || d.First_Name || 'lead').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toLowerCase();\n}\n\n// ---- MOCK Perplexity: returns the OpenAI-compatible chat-completions shape ----\n// The research object is a JSON *string* inside choices[0].message.content,\n// exactly as the real Perplexity API returns it.\nfunction mockPplx(lead) {\n  var scenario = s(lead._mock_scenario).trim().toLowerCase();\n  var first = s(lead.First_Name).trim();\n  var co = s(lead.Company_Name).trim();\n  var site = s(lead.Website).trim();\n  var content;\n  if (scenario === 'bad_research') {\n    content = '<<<PERPLEXITY_ERROR>>> upstream returned a non-JSON blob; this is deliberately unparseable';\n  } else if (scenario === 'no_context' || first.toLowerCase() === 'robert') {\n    content = JSON.stringify({\n      research_summary: 'No recent, specific, verifiable public context found for '\n        + (first || 'this lead') + ' at ' + (co || 'their company') + '.',\n      confidence: 'low',\n      source_hints: ['mock']\n    });\n  } else {\n    content = JSON.stringify({\n      research_summary: (first || 'The founder') + ' at ' + (co || 'the company')\n        + ' recently shared a notable milestone; ' + (site || 'their site')\n        + ' highlights a new offering worth referencing.',\n      confidence: 'high',\n      source_hints: ['mock:linkedin', 'mock:site']\n    });\n  }\n  return {\n    id: 'mock-pplx-' + leadHash(lead),\n    model: 'sonar',\n    choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: content } }],\n    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }\n  };\n}\n\n// ---- shared normalizer (question a): raw pplx shape -> research fields ----\n// Re-attaches the lead so downstream nodes have both the research + source cols.\nfunction normalizeResearch(raw, lead) {\n  var research_summary = '', confidence = 'low', _status = 'ok', _error = '';\n  try {\n    var contentStr = raw && raw.choices && raw.choices[0] && raw.choices[0].message\n      ? raw.choices[0].message.content : '';\n    var parsed = JSON.parse(contentStr);\n    research_summary = s(parsed.research_summary);\n    confidence = s(parsed.confidence == null ? 'low' : parsed.confidence).toLowerCase();\n  } catch (e) {\n    _status = 'dead';\n    _error = 'bad_research: Perplexity payload was not valid JSON';\n  }\n  return Object.assign({}, lead, {\n    research_summary: research_summary, confidence: confidence, _status: _status, _error: _error\n  });\n}\n\n// call Claude only when research is usable (mirrors the \"Call Claude?\" IF node)\nfunction shouldCallClaude(d) {\n  return d._status !== 'dead' && d.confidence !== 'low';\n}\n\n// low-confidence or dead-research short-circuit (no Claude call)\nfunction noContextLine(d) {\n  var line = d._status === 'dead' ? '' : '[NO_CONTEXT]';\n  return Object.assign({}, d, { Personalized_First_Line: line });\n}\n\n// ---- MOCK Anthropic: returns the Messages API shape; line in content[0].text -\nfunction mockAnthropic(d) {\n  var scenario = s(d._mock_scenario).trim().toLowerCase();\n  var text;\n  if (scenario === 'empty_line') {\n    text = '';\n  } else {\n    var who = d.First_Name ? d.First_Name : 'there';\n    var co = d.Company_Name ? d.Company_Name : 'your company';\n    text = 'Saw the recent milestone over at ' + co + ' — genuinely impressive work, ' + who + '.';\n  }\n  return {\n    id: 'msg_mock_' + leadHash(d),\n    type: 'message', role: 'assistant',\n    model: 'claude-sonnet-4-5-20250929',\n    content: [{ type: 'text', text: text }],\n    stop_reason: 'end_turn',\n    usage: { input_tokens: 0, output_tokens: 0 }\n  };\n}\n\n// ---- shared extractor (question a): raw anthropic shape -> first line ----\nfunction extractFirstLine(raw, norm) {\n  var text = '', _status = norm._status || 'ok', _error = norm._error || '';\n  try { text = s(raw.content[0].text); } catch (e) { text = ''; }\n  if (!text || !text.trim()) {\n    _status = 'dead';\n    _error = 'empty_line: model returned no first line';\n  }\n  return Object.assign({}, norm, { Personalized_First_Line: text, _status: _status, _error: _error });\n}\n\n// ---- the single choke point: build {tab,row} with ONLY the locked columns ----\n// [MOCK] prefixes the two LLM-output columns in mock mode, but NEVER wraps the\n// [NO_CONTEXT] sentinel (operators + verify_loomless_batch.py match it exactly)\n// and never a lone-prefix on empties.\nfunction buildRow(d, mode) {\n  var isMock = mode === 'mock';\n  var px = '[MOCK] ';\n  var status = d._status === 'dead' ? 'dead' : 'ready_for_review';\n  var rs = s(d.research_summary);\n  var line = s(d.Personalized_First_Line);\n  var research = (isMock && rs) ? px + rs : rs;\n  var isSentinel = line === '[NO_CONTEXT]';\n  var firstLine = (isMock && line && !isSentinel) ? px + line : line;\n  return { tab: 'Loomless', row: {\n      Company_Name: s(d.Company_Name),\n      Owner_Full_Name: s(d.Owner_Full_Name),\n      First_Name: s(d.First_Name),\n      Email: s(d.Email),\n      Website: s(d.Website),\n      Research_Summary: research,\n      Personalized_First_Line: firstLine,\n      status: status\n  } };\n}\n\n// ---- batch guard + fail-closed safety asserts (run once for all items) ----\nfunction guardCheck(rows, env) {\n  var REQUIRED = [\"Company_Name\", \"Owner_Full_Name\", \"First_Name\", \"Email\", \"Website\"];\n  var mode = s(env.LOOMLESS_MODE || 'mock');\n  var batchSize = parseInt(env.LOOMLESS_BATCH_SIZE || '100', 10);\n  var gsheet = s(env.GOOGLE_SHEET_ID);\n  var devsheet = s(env.LOOMLESS_DEV_SHEET_ID);\n  function err(reason, message, fields) {\n    return { ok: false, errorItem: {\n      _guard_error: 'yes', level: 'error', pipeline: 'loomless',\n      message: message, fields: Object.assign({ reason: reason, mode: mode }, fields || {})\n    } };\n  }\n  // layer-3 fail-closed dev-sheet guard: in mock mode, refuse unless the target\n  // Sheet IS the known dev Sheet (allowlist, not a pattern match).\n  if (mode === 'mock' && gsheet !== devsheet) {\n    return err('sheet_guard',\n      'Loomless batch REFUSED: mock mode but GOOGLE_SHEET_ID != LOOMLESS_DEV_SHEET_ID (fail-closed)',\n      { google_sheet_len: gsheet.length, dev_sheet_len: devsheet.length });\n  }\n  if (!rows || rows.length === 0) {\n    return err('empty_csv', 'Loomless batch rejected: CSV produced zero rows', { rows: 0 });\n  }\n  var first = rows[0] || {};\n  var missing = REQUIRED.filter(function (c) { return !(c in first); });\n  if (missing.length) {\n    return err('missing_columns',\n      'Loomless batch rejected: CSV missing required column(s): ' + missing.join(', '),\n      { missing: missing.join(','), got: Object.keys(first).join(',') });\n  }\n  if (rows.length > batchSize) {\n    return err('batch_too_large',\n      'Loomless batch rejected: ' + rows.length + ' rows exceeds LOOMLESS_BATCH_SIZE=' + batchSize,\n      { rows: rows.length, cap: batchSize });\n  }\n  return { ok: true };\n}\n\n// ---- aggregate write results into one Discord summary item ----\nfunction aggregate(rows, mode) {\n  var total = 0, ready = 0, noctx = 0, dead = 0;\n  for (var i = 0; i < rows.length; i++) {\n    var row = (rows[i] && rows[i].row) ? rows[i].row : rows[i]; // unwrap {success,tab,row}\n    total++;\n    var st = row.status;\n    var line = s(row.Personalized_First_Line).replace(/^\\[MOCK\\]\\s+/, '');\n    if (st === 'dead') { dead++; }\n    else { ready++; if (line.trim() === '[NO_CONTEXT]') { noctx++; } }\n  }\n  return {\n    level: 'info',\n    pipeline: 'loomless',\n    message: 'Loomless batch ready: ' + total + ' rows — ' + ready + ' ready_for_review ('\n      + noctx + ' [NO_CONTEXT]), ' + dead + ' dead [mode=' + mode + ']',\n    fields: { total: total, ready_for_review: ready, no_context: noctx, dead: dead, mode: mode }\n  };\n}\n\nconst norm = $('Normalize Research').item.json;\nreturn { json: extractFirstLine($json, norm) };\n"
+      },
+      "id": "loomless-0020",
+      "name": "Extract First Line",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "numberInputs": 2,
+        "mode": "append"
+      },
+      "id": "loomless-0021",
+      "name": "Merge — rejoin lead paths",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1740,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\n// ---- shared helpers ----\nfunction s(v) { return v == null ? '' : String(v); }\nfunction leadHash(d) {\n  return s(d.Email || d.First_Name || 'lead').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toLowerCase();\n}\n\n// ---- MOCK Perplexity: returns the OpenAI-compatible chat-completions shape ----\n// The research object is a JSON *string* inside choices[0].message.content,\n// exactly as the real Perplexity API returns it.\nfunction mockPplx(lead) {\n  var scenario = s(lead._mock_scenario).trim().toLowerCase();\n  var first = s(lead.First_Name).trim();\n  var co = s(lead.Company_Name).trim();\n  var site = s(lead.Website).trim();\n  var content;\n  if (scenario === 'bad_research') {\n    content = '<<<PERPLEXITY_ERROR>>> upstream returned a non-JSON blob; this is deliberately unparseable';\n  } else if (scenario === 'no_context' || first.toLowerCase() === 'robert') {\n    content = JSON.stringify({\n      research_summary: 'No recent, specific, verifiable public context found for '\n        + (first || 'this lead') + ' at ' + (co || 'their company') + '.',\n      confidence: 'low',\n      source_hints: ['mock']\n    });\n  } else {\n    content = JSON.stringify({\n      research_summary: (first || 'The founder') + ' at ' + (co || 'the company')\n        + ' recently shared a notable milestone; ' + (site || 'their site')\n        + ' highlights a new offering worth referencing.',\n      confidence: 'high',\n      source_hints: ['mock:linkedin', 'mock:site']\n    });\n  }\n  return {\n    id: 'mock-pplx-' + leadHash(lead),\n    model: 'sonar',\n    choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: content } }],\n    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }\n  };\n}\n\n// ---- shared normalizer (question a): raw pplx shape -> research fields ----\n// Re-attaches the lead so downstream nodes have both the research + source cols.\nfunction normalizeResearch(raw, lead) {\n  var research_summary = '', confidence = 'low', _status = 'ok', _error = '';\n  try {\n    var contentStr = raw && raw.choices && raw.choices[0] && raw.choices[0].message\n      ? raw.choices[0].message.content : '';\n    var parsed = JSON.parse(contentStr);\n    research_summary = s(parsed.research_summary);\n    confidence = s(parsed.confidence == null ? 'low' : parsed.confidence).toLowerCase();\n  } catch (e) {\n    _status = 'dead';\n    _error = 'bad_research: Perplexity payload was not valid JSON';\n  }\n  return Object.assign({}, lead, {\n    research_summary: research_summary, confidence: confidence, _status: _status, _error: _error\n  });\n}\n\n// call Claude only when research is usable (mirrors the \"Call Claude?\" IF node)\nfunction shouldCallClaude(d) {\n  return d._status !== 'dead' && d.confidence !== 'low';\n}\n\n// low-confidence or dead-research short-circuit (no Claude call)\nfunction noContextLine(d) {\n  var line = d._status === 'dead' ? '' : '[NO_CONTEXT]';\n  return Object.assign({}, d, { Personalized_First_Line: line });\n}\n\n// ---- MOCK Anthropic: returns the Messages API shape; line in content[0].text -\nfunction mockAnthropic(d) {\n  var scenario = s(d._mock_scenario).trim().toLowerCase();\n  var text;\n  if (scenario === 'empty_line') {\n    text = '';\n  } else {\n    var who = d.First_Name ? d.First_Name : 'there';\n    var co = d.Company_Name ? d.Company_Name : 'your company';\n    text = 'Saw the recent milestone over at ' + co + ' — genuinely impressive work, ' + who + '.';\n  }\n  return {\n    id: 'msg_mock_' + leadHash(d),\n    type: 'message', role: 'assistant',\n    model: 'claude-sonnet-4-5-20250929',\n    content: [{ type: 'text', text: text }],\n    stop_reason: 'end_turn',\n    usage: { input_tokens: 0, output_tokens: 0 }\n  };\n}\n\n// ---- shared extractor (question a): raw anthropic shape -> first line ----\nfunction extractFirstLine(raw, norm) {\n  var text = '', _status = norm._status || 'ok', _error = norm._error || '';\n  try { text = s(raw.content[0].text); } catch (e) { text = ''; }\n  if (!text || !text.trim()) {\n    _status = 'dead';\n    _error = 'empty_line: model returned no first line';\n  }\n  return Object.assign({}, norm, { Personalized_First_Line: text, _status: _status, _error: _error });\n}\n\n// ---- the single choke point: build {tab,row} with ONLY the locked columns ----\n// [MOCK] prefixes the two LLM-output columns in mock mode, but NEVER wraps the\n// [NO_CONTEXT] sentinel (operators + verify_loomless_batch.py match it exactly)\n// and never a lone-prefix on empties.\nfunction buildRow(d, mode) {\n  var isMock = mode === 'mock';\n  var px = '[MOCK] ';\n  var status = d._status === 'dead' ? 'dead' : 'ready_for_review';\n  var rs = s(d.research_summary);\n  var line = s(d.Personalized_First_Line);\n  var research = (isMock && rs) ? px + rs : rs;\n  var isSentinel = line === '[NO_CONTEXT]';\n  var firstLine = (isMock && line && !isSentinel) ? px + line : line;\n  return { tab: 'Loomless', row: {\n      Company_Name: s(d.Company_Name),\n      Owner_Full_Name: s(d.Owner_Full_Name),\n      First_Name: s(d.First_Name),\n      Email: s(d.Email),\n      Website: s(d.Website),\n      Research_Summary: research,\n      Personalized_First_Line: firstLine,\n      status: status\n  } };\n}\n\n// ---- batch guard + fail-closed safety asserts (run once for all items) ----\nfunction guardCheck(rows, env) {\n  var REQUIRED = [\"Company_Name\", \"Owner_Full_Name\", \"First_Name\", \"Email\", \"Website\"];\n  var mode = s(env.LOOMLESS_MODE || 'mock');\n  var batchSize = parseInt(env.LOOMLESS_BATCH_SIZE || '100', 10);\n  var gsheet = s(env.GOOGLE_SHEET_ID);\n  var devsheet = s(env.LOOMLESS_DEV_SHEET_ID);\n  function err(reason, message, fields) {\n    return { ok: false, errorItem: {\n      _guard_error: 'yes', level: 'error', pipeline: 'loomless',\n      message: message, fields: Object.assign({ reason: reason, mode: mode }, fields || {})\n    } };\n  }\n  // layer-3 fail-closed dev-sheet guard: in mock mode, refuse unless the target\n  // Sheet IS the known dev Sheet (allowlist, not a pattern match).\n  if (mode === 'mock' && gsheet !== devsheet) {\n    return err('sheet_guard',\n      'Loomless batch REFUSED: mock mode but GOOGLE_SHEET_ID != LOOMLESS_DEV_SHEET_ID (fail-closed)',\n      { google_sheet_len: gsheet.length, dev_sheet_len: devsheet.length });\n  }\n  if (!rows || rows.length === 0) {\n    return err('empty_csv', 'Loomless batch rejected: CSV produced zero rows', { rows: 0 });\n  }\n  var first = rows[0] || {};\n  var missing = REQUIRED.filter(function (c) { return !(c in first); });\n  if (missing.length) {\n    return err('missing_columns',\n      'Loomless batch rejected: CSV missing required column(s): ' + missing.join(', '),\n      { missing: missing.join(','), got: Object.keys(first).join(',') });\n  }\n  if (rows.length > batchSize) {\n    return err('batch_too_large',\n      'Loomless batch rejected: ' + rows.length + ' rows exceeds LOOMLESS_BATCH_SIZE=' + batchSize,\n      { rows: rows.length, cap: batchSize });\n  }\n  return { ok: true };\n}\n\n// ---- aggregate write results into one Discord summary item ----\nfunction aggregate(rows, mode) {\n  var total = 0, ready = 0, noctx = 0, dead = 0;\n  for (var i = 0; i < rows.length; i++) {\n    var row = (rows[i] && rows[i].row) ? rows[i].row : rows[i]; // unwrap {success,tab,row}\n    total++;\n    var st = row.status;\n    var line = s(row.Personalized_First_Line).replace(/^\\[MOCK\\]\\s+/, '');\n    if (st === 'dead') { dead++; }\n    else { ready++; if (line.trim() === '[NO_CONTEXT]') { noctx++; } }\n  }\n  return {\n    level: 'info',\n    pipeline: 'loomless',\n    message: 'Loomless batch ready: ' + total + ' rows — ' + ready + ' ready_for_review ('\n      + noctx + ' [NO_CONTEXT]), ' + dead + ' dead [mode=' + mode + ']',\n    fields: { total: total, ready_for_review: ready, no_context: noctx, dead: dead, mode: mode }\n  };\n}\n\nreturn { json: buildRow($json, $env.LOOMLESS_MODE) };\n"
+      },
+      "id": "loomless-0022",
+      "name": "Set: Build Loomless Row (Keep Only Set)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1960,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_Sub_WriteRowToSheet_ID",
+          "mode": "list",
+          "cachedResultName": "Sub_WriteRowToSheet"
+        },
+        "options": {}
+      },
+      "id": "loomless-0023",
+      "name": "Sub_WriteRowToSheet",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2180,
+        340
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\n// ---- shared helpers ----\nfunction s(v) { return v == null ? '' : String(v); }\nfunction leadHash(d) {\n  return s(d.Email || d.First_Name || 'lead').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toLowerCase();\n}\n\n// ---- MOCK Perplexity: returns the OpenAI-compatible chat-completions shape ----\n// The research object is a JSON *string* inside choices[0].message.content,\n// exactly as the real Perplexity API returns it.\nfunction mockPplx(lead) {\n  var scenario = s(lead._mock_scenario).trim().toLowerCase();\n  var first = s(lead.First_Name).trim();\n  var co = s(lead.Company_Name).trim();\n  var site = s(lead.Website).trim();\n  var content;\n  if (scenario === 'bad_research') {\n    content = '<<<PERPLEXITY_ERROR>>> upstream returned a non-JSON blob; this is deliberately unparseable';\n  } else if (scenario === 'no_context' || first.toLowerCase() === 'robert') {\n    content = JSON.stringify({\n      research_summary: 'No recent, specific, verifiable public context found for '\n        + (first || 'this lead') + ' at ' + (co || 'their company') + '.',\n      confidence: 'low',\n      source_hints: ['mock']\n    });\n  } else {\n    content = JSON.stringify({\n      research_summary: (first || 'The founder') + ' at ' + (co || 'the company')\n        + ' recently shared a notable milestone; ' + (site || 'their site')\n        + ' highlights a new offering worth referencing.',\n      confidence: 'high',\n      source_hints: ['mock:linkedin', 'mock:site']\n    });\n  }\n  return {\n    id: 'mock-pplx-' + leadHash(lead),\n    model: 'sonar',\n    choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: content } }],\n    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }\n  };\n}\n\n// ---- shared normalizer (question a): raw pplx shape -> research fields ----\n// Re-attaches the lead so downstream nodes have both the research + source cols.\nfunction normalizeResearch(raw, lead) {\n  var research_summary = '', confidence = 'low', _status = 'ok', _error = '';\n  try {\n    var contentStr = raw && raw.choices && raw.choices[0] && raw.choices[0].message\n      ? raw.choices[0].message.content : '';\n    var parsed = JSON.parse(contentStr);\n    research_summary = s(parsed.research_summary);\n    confidence = s(parsed.confidence == null ? 'low' : parsed.confidence).toLowerCase();\n  } catch (e) {\n    _status = 'dead';\n    _error = 'bad_research: Perplexity payload was not valid JSON';\n  }\n  return Object.assign({}, lead, {\n    research_summary: research_summary, confidence: confidence, _status: _status, _error: _error\n  });\n}\n\n// call Claude only when research is usable (mirrors the \"Call Claude?\" IF node)\nfunction shouldCallClaude(d) {\n  return d._status !== 'dead' && d.confidence !== 'low';\n}\n\n// low-confidence or dead-research short-circuit (no Claude call)\nfunction noContextLine(d) {\n  var line = d._status === 'dead' ? '' : '[NO_CONTEXT]';\n  return Object.assign({}, d, { Personalized_First_Line: line });\n}\n\n// ---- MOCK Anthropic: returns the Messages API shape; line in content[0].text -\nfunction mockAnthropic(d) {\n  var scenario = s(d._mock_scenario).trim().toLowerCase();\n  var text;\n  if (scenario === 'empty_line') {\n    text = '';\n  } else {\n    var who = d.First_Name ? d.First_Name : 'there';\n    var co = d.Company_Name ? d.Company_Name : 'your company';\n    text = 'Saw the recent milestone over at ' + co + ' — genuinely impressive work, ' + who + '.';\n  }\n  return {\n    id: 'msg_mock_' + leadHash(d),\n    type: 'message', role: 'assistant',\n    model: 'claude-sonnet-4-5-20250929',\n    content: [{ type: 'text', text: text }],\n    stop_reason: 'end_turn',\n    usage: { input_tokens: 0, output_tokens: 0 }\n  };\n}\n\n// ---- shared extractor (question a): raw anthropic shape -> first line ----\nfunction extractFirstLine(raw, norm) {\n  var text = '', _status = norm._status || 'ok', _error = norm._error || '';\n  try { text = s(raw.content[0].text); } catch (e) { text = ''; }\n  if (!text || !text.trim()) {\n    _status = 'dead';\n    _error = 'empty_line: model returned no first line';\n  }\n  return Object.assign({}, norm, { Personalized_First_Line: text, _status: _status, _error: _error });\n}\n\n// ---- the single choke point: build {tab,row} with ONLY the locked columns ----\n// [MOCK] prefixes the two LLM-output columns in mock mode, but NEVER wraps the\n// [NO_CONTEXT] sentinel (operators + verify_loomless_batch.py match it exactly)\n// and never a lone-prefix on empties.\nfunction buildRow(d, mode) {\n  var isMock = mode === 'mock';\n  var px = '[MOCK] ';\n  var status = d._status === 'dead' ? 'dead' : 'ready_for_review';\n  var rs = s(d.research_summary);\n  var line = s(d.Personalized_First_Line);\n  var research = (isMock && rs) ? px + rs : rs;\n  var isSentinel = line === '[NO_CONTEXT]';\n  var firstLine = (isMock && line && !isSentinel) ? px + line : line;\n  return { tab: 'Loomless', row: {\n      Company_Name: s(d.Company_Name),\n      Owner_Full_Name: s(d.Owner_Full_Name),\n      First_Name: s(d.First_Name),\n      Email: s(d.Email),\n      Website: s(d.Website),\n      Research_Summary: research,\n      Personalized_First_Line: firstLine,\n      status: status\n  } };\n}\n\n// ---- batch guard + fail-closed safety asserts (run once for all items) ----\nfunction guardCheck(rows, env) {\n  var REQUIRED = [\"Company_Name\", \"Owner_Full_Name\", \"First_Name\", \"Email\", \"Website\"];\n  var mode = s(env.LOOMLESS_MODE || 'mock');\n  var batchSize = parseInt(env.LOOMLESS_BATCH_SIZE || '100', 10);\n  var gsheet = s(env.GOOGLE_SHEET_ID);\n  var devsheet = s(env.LOOMLESS_DEV_SHEET_ID);\n  function err(reason, message, fields) {\n    return { ok: false, errorItem: {\n      _guard_error: 'yes', level: 'error', pipeline: 'loomless',\n      message: message, fields: Object.assign({ reason: reason, mode: mode }, fields || {})\n    } };\n  }\n  // layer-3 fail-closed dev-sheet guard: in mock mode, refuse unless the target\n  // Sheet IS the known dev Sheet (allowlist, not a pattern match).\n  if (mode === 'mock' && gsheet !== devsheet) {\n    return err('sheet_guard',\n      'Loomless batch REFUSED: mock mode but GOOGLE_SHEET_ID != LOOMLESS_DEV_SHEET_ID (fail-closed)',\n      { google_sheet_len: gsheet.length, dev_sheet_len: devsheet.length });\n  }\n  if (!rows || rows.length === 0) {\n    return err('empty_csv', 'Loomless batch rejected: CSV produced zero rows', { rows: 0 });\n  }\n  var first = rows[0] || {};\n  var missing = REQUIRED.filter(function (c) { return !(c in first); });\n  if (missing.length) {\n    return err('missing_columns',\n      'Loomless batch rejected: CSV missing required column(s): ' + missing.join(', '),\n      { missing: missing.join(','), got: Object.keys(first).join(',') });\n  }\n  if (rows.length > batchSize) {\n    return err('batch_too_large',\n      'Loomless batch rejected: ' + rows.length + ' rows exceeds LOOMLESS_BATCH_SIZE=' + batchSize,\n      { rows: rows.length, cap: batchSize });\n  }\n  return { ok: true };\n}\n\n// ---- aggregate write results into one Discord summary item ----\nfunction aggregate(rows, mode) {\n  var total = 0, ready = 0, noctx = 0, dead = 0;\n  for (var i = 0; i < rows.length; i++) {\n    var row = (rows[i] && rows[i].row) ? rows[i].row : rows[i]; // unwrap {success,tab,row}\n    total++;\n    var st = row.status;\n    var line = s(row.Personalized_First_Line).replace(/^\\[MOCK\\]\\s+/, '');\n    if (st === 'dead') { dead++; }\n    else { ready++; if (line.trim() === '[NO_CONTEXT]') { noctx++; } }\n  }\n  return {\n    level: 'info',\n    pipeline: 'loomless',\n    message: 'Loomless batch ready: ' + total + ' rows — ' + ready + ' ready_for_review ('\n      + noctx + ' [NO_CONTEXT]), ' + dead + ' dead [mode=' + mode + ']',\n    fields: { total: total, ready_for_review: ready, no_context: noctx, dead: dead, mode: mode }\n  };\n}\n\nconst rows = $input.all().map(i => i.json);\nreturn [{ json: aggregate(rows, $env.LOOMLESS_MODE) }];\n"
+      },
+      "id": "loomless-0024",
+      "name": "Aggregate Batch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_Sub_NotifyDiscord_ID",
+          "mode": "list",
+          "cachedResultName": "Sub_NotifyDiscord"
+        },
+        "options": {}
+      },
+      "id": "loomless-0025",
+      "name": "Sub_NotifyDiscord (summary)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2620,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "move",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $('Watch Loomless-Inbox (.csv)').first().json.id }}",
+          "mode": "id"
+        },
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list",
+          "cachedResultName": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_Loomless_Inbox_processed_FOLDER_ID",
+          "mode": "list",
+          "cachedResultName": "processed"
+        },
+        "options": {}
+      },
+      "id": "loomless-0026",
+      "name": "Move CSV → processed/",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2840,
+        340
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REPLACE_WITH_Google_SA_CREDENTIAL_ID",
+          "name": "Google Sheets — OPS-61 SA"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "content": "## OPS-61 · Pipeline 1 — Loomless (mock-based dev)\n\n**Purpose:** CSV of leads → per-lead research + ONE personalized first line → `Loomless` tab → Discord summary.\n**In:** Drive `OPS-61/Loomless-Inbox/*.csv` (cols: Company_Name, Owner_Full_Name, First_Name, Email, Website).\n**Out:** `Loomless` rows (`status=ready_for_review` | `dead`) + `#ops-61-feed` ping.\n\n**Automation stops at logging — no email is ever sent (locked constraint).**\n\nDepends on: `Sub_WriteRowToSheet`, `Sub_NotifyDiscord` (locked Foundation primitives, used as-is).",
+        "height": 300,
+        "width": 560,
+        "color": 4
+      },
+      "id": "loomless-note-1",
+      "name": "Doc — Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1560,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### ⚠️ UNTUNED — prompts are v0.1 drafts\n\nPer PLAN v8 / Decision #12, prompts are NOT tuned in this build. Real Perplexity/Anthropic calls, prompt tuning, and live cost measurement all move to **Build Spec #6 (migration)**.\n\nPrompt sources: `pipelines/01-loomless/prompts/`.",
+        "height": 300,
+        "width": 360,
+        "color": 3
+      },
+      "id": "loomless-note-2",
+      "name": "Doc — UNTUNED banner",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -960,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### Mock/Live toggle — `$env.LOOMLESS_MODE`\n\nEach external call has TWO paths, chosen by the `Mode = live?` IF:\n- **mock** (dev default): the `Mock — …` Code node returns the **exact** API JSON shape.\n- **live** (BS#6): the `HTTP — …` node calls the real API.\n\nBoth paths reconverge into ONE shared normalizer (`Normalize Research` / `Extract First Line`) so downstream is mode-agnostic.\n\n**To go live:** set `LOOMLESS_MODE=live` + provide real keys. That flip + tuning IS Build Spec #6.",
+        "height": 280,
+        "width": 440,
+        "color": 5
+      },
+      "id": "loomless-note-3",
+      "name": "Doc — Mock/Live toggle",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -240,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 🔑 Live HTTP nodes use `$env` header auth — NO n8n credential\n\n`HTTP — Perplexity`: `Authorization: Bearer {{ $env.PERPLEXITY_API_KEY }}`\n`HTTP — Anthropic`: `x-api-key: {{ $env.ANTHROPIC_API_KEY }}` + `anthropic-version: 2023-06-01`\n\nDeliberate: keeps the workflow credential-free except the Google SA. No 'Anthropic account' credential to wire. Model pinned **claude-sonnet-4-5-20250929**. Parked behind the live IF — they receive 0 items in mock mode and never execute.",
+        "height": 240,
+        "width": 460,
+        "color": 6
+      },
+      "id": "loomless-note-4",
+      "name": "Doc — $env auth on live HTTP",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### Deterministic mock scenarios\nBranch keyed off `First_Name` or optional `_mock_scenario` CSV column:\n\n| Trigger | Result row |\n|---|---|\n| default | `ready_for_review`, real line |\n| `First_Name=Robert` / `_mock_scenario=no_context` | `ready_for_review`, `[NO_CONTEXT]` |\n| `_mock_scenario=bad_research` | `dead` (research JSON parse fails) |\n| `_mock_scenario=empty_line` | `dead` (Claude returns empty) |\n\n`[MOCK] ` prefixes `Research_Summary` + real first lines — but NEVER the `[NO_CONTEXT]` sentinel.",
+        "height": 280,
+        "width": 460,
+        "color": 5
+      },
+      "id": "loomless-note-5",
+      "name": "Doc — Mock scenarios",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        420,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### 🗂️ Where CSVs go after a run\n\n- **Success:** `OPS-61/Loomless-Inbox/processed/`\n- **Guard rejection** (bad batch — oversize / missing cols / wrong Sheet):\n  Discord `❌ error` ping, then the CSV is **moved to** `OPS-61/Loomless-Inbox/rejected/`, then the run stops.\n\nMoving it out of the inbox stops the Drive Trigger re-firing on the same bad file every poll (reject loop). **Operator:** find rejected uploads in `rejected/`, fix, re-drop into the inbox.\n\n_Both `processed/` and `rejected/` are ID-referenced Drive folders — they must exist + be wired (STEP 3), unlike Sheet tabs which the Sub auto-creates._",
+        "height": 280,
+        "width": 440,
+        "color": 2
+      },
+      "id": "loomless-note-7",
+      "name": "Doc — Rejected CSVs",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -460,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### `Set: Build Loomless Row` = the single choke point\n\nEmits ONLY `{ tab, row }` with the 8 locked data cols (Keep-Only-Set by construction — nothing passes implicitly). `created_at` is auto-stamped by `Sub_WriteRowToSheet`.\n\n**Safety (question c):** (1) dev/prod use different Sheets; (2) `[MOCK]` marker; (3) fail-closed guard: mock mode refuses to write unless `GOOGLE_SHEET_ID == LOOMLESS_DEV_SHEET_ID`.\n\nContinue-On-Fail on external + write nodes → a single bad lead becomes `status=dead`, batch continues.",
+        "height": 300,
+        "width": 460,
+        "color": 4
+      },
+      "id": "loomless-note-6",
+      "name": "Doc — Build row / safety",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1900,
+        120
+      ]
+    }
+  ],
+  "connections": {
+    "Watch Loomless-Inbox (.csv)": {
+      "main": [
+        [
+          {
+            "node": "Filter — .csv only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter — .csv only": {
+      "main": [
+        [
+          {
+            "node": "Download CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download CSV": {
+      "main": [
+        [
+          {
+            "node": "Extract Rows from CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Rows from CSV": {
+      "main": [
+        [
+          {
+            "node": "Guard — batch/columns/dev-sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard — batch/columns/dev-sheet": {
+      "main": [
+        [
+          {
+            "node": "Guard failed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard failed?": {
+      "main": [
+        [
+          {
+            "node": "Notify — batch rejected",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mode = live? (Perplexity)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify — batch rejected": {
+      "main": [
+        [
+          {
+            "node": "Move CSV → rejected/",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Move CSV → rejected/": {
+      "main": [
+        [
+          {
+            "node": "Stop — batch rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mode = live? (Perplexity)": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Perplexity (live)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mock — Perplexity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Perplexity (live)": {
+      "main": [
+        [
+          {
+            "node": "Merge — Perplexity paths",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mock — Perplexity": {
+      "main": [
+        [
+          {
+            "node": "Merge — Perplexity paths",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge — Perplexity paths": {
+      "main": [
+        [
+          {
+            "node": "Normalize Research",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Research": {
+      "main": [
+        [
+          {
+            "node": "Call Claude?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Claude?": {
+      "main": [
+        [
+          {
+            "node": "Mode = live? (Anthropic)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set — [NO_CONTEXT] / dead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mode = live? (Anthropic)": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Anthropic (live)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mock — Anthropic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Anthropic (live)": {
+      "main": [
+        [
+          {
+            "node": "Merge — Anthropic paths",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mock — Anthropic": {
+      "main": [
+        [
+          {
+            "node": "Merge — Anthropic paths",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge — Anthropic paths": {
+      "main": [
+        [
+          {
+            "node": "Extract First Line",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract First Line": {
+      "main": [
+        [
+          {
+            "node": "Merge — rejoin lead paths",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set — [NO_CONTEXT] / dead": {
+      "main": [
+        [
+          {
+            "node": "Merge — rejoin lead paths",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge — rejoin lead paths": {
+      "main": [
+        [
+          {
+            "node": "Set: Build Loomless Row (Keep Only Set)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set: Build Loomless Row (Keep Only Set)": {
+      "main": [
+        [
+          {
+            "node": "Sub_WriteRowToSheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sub_WriteRowToSheet": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Batch": {
+      "main": [
+        [
+          {
+            "node": "Sub_NotifyDiscord (summary)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sub_NotifyDiscord (summary)": {
+      "main": [
+        [
+          {
+            "node": "Move CSV → processed/",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": [
+    {
+      "name": "ops-61"
+    },
+    {
+      "name": "loomless"
+    }
+  ]
+}
