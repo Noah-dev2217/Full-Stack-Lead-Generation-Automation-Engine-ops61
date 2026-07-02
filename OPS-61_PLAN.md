@@ -1,6 +1,6 @@
 # OPS-61 — Full-Stack Lead Generation & Automation Engine
 
-**Status:** PLAN v7 — build-locally, handoff-to-server model locked. Foundation build in progress.
+**Status:** PLAN v8 — mock-based dev + credentials-at-migration model locked (Decision #12). Foundation shipped; Loomless build restructured around mocks.
 **Owner:** Rinoah (solo dev), Jon (direction)
 **Due:** Jul 3
 **Linear:** OPS-61
@@ -106,6 +106,7 @@ New code: Terminator Loom recorder orchestrator + FB Group extension. Rest is re
 | 9 | Recording approach | ScreenFlow bundled locally + Playwright orchestration + FFmpeg overlay post-process | Kills OS-level audio loopback complexity; uses Jon's already-built internal tool; FFmpeg reduced to overlay filter only; ScreenFlow stays unforked + reusable |
 | 10 | FB Group Q3 conversion question | **Option A — DM permission.** Exact wording: "Would you like me to reach out to discuss how we may be able to help you with that?" | Directly aligns with DM Sorcery flow; operator already manually approves + sends welcome voice note, so explicit DM permission at the gate eliminates friction into the Engaged stage. Prioritizes immediate client acquisition over list-building. When Q3=Yes lands in Sheet, operator action is unambiguous: skip warm-up, use Direct Intent reply scripts, drop Calendly |
 | 11 | Profile pic overlay format | Static PNG default, animated GIF as opt-in config flag | Static is simpler + sufficient for v1 spec. GIF support adds ~5 lines of FFmpeg input flags; build it in but default off. EasyGrow notes GIF can boost preview view rate — A/B test in v2 |
+| 12 | Credential provisioning timing | **Deferred to migration day (Build Spec #6).** All pipelines built with mocked API responses locally. No real Perplexity, Anthropic, Drive OAuth, or FB session credentials during dev. | Rationale: (a) all credentials get reset/replaced when project transfers to company server anyway, (b) Perplexity Pro is a real recurring cost not worth burning pre-migration, (c) Anthropic prompt-tuning burns tokens that will be redone anyway once real production leads flow, (d) cleaner separation between "workflow logic" (portable, git-tracked) and "credentials" (target-machine, secret). Tradeoff: prompt quality is untuned at ship time; first real batches during Build Spec #6 will need a focused tuning pass. |
 
 ---
 
@@ -376,7 +377,7 @@ Dev uses placeholders (any 90-second mp3, any square headshot) during build. Swa
 3. **JV Research Bot** — reuses Loomless's Perplexity integration
 4. **FB Group Chrome extension + webhook** — narrow scope, ships fast
 5. **Terminator Loom recorder** — most complex, dedicated Claude Code session, depends on spike #0
-6. **Handoff to company server machine** — package + migrate the full stack (n8n workflows, credentials shape, recorder service, docker compose, docs) to the company server. Uses the `handoff-package` skill. Produces a `HANDOFF.md` runbook that a fresh operator can follow to bring the whole system online.
+6. **Handoff to company server machine** — package + migrate the full stack (n8n workflows, credentials shape, recorder service, docker compose, docs) to the company server. Uses the `handoff-package` skill. Produces a `HANDOFF.md` runbook that a fresh operator can follow to bring the whole system online. **Additionally (per Decision #12):** provision real credentials on the target machine (Anthropic, Perplexity, Google Service Account, Discord webhook, Chrome extension install, master MP3 + profile pic assets), run one real batch per pipeline as the acceptance test, and complete prompt tuning against real API responses.
 
 Each step gets its own Claude Code session with this doc + the step's spec section + the Sheets schema. Don't one-shot all four.
 

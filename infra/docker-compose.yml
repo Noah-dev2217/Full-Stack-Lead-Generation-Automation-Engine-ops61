@@ -55,7 +55,18 @@ services:
       # Values come from the adjacent infra/.env (never committed).
       - GOOGLE_SHEET_ID=${GOOGLE_SHEET_ID}
       - DISCORD_WEBHOOK_OPS61_FEED=${DISCORD_WEBHOOK_OPS61_FEED}
-      # Allow $env access inside Code nodes (workflows read the two vars above).
+
+      # Loomless pipeline (Build Spec #2). LLM keys + batch safety valves.
+      # ANTHROPIC_API_KEY: read by the Anthropic credential + Claude first-line call.
+      # PERPLEXITY_API_KEY: read directly in the HTTP Request Authorization header
+      #   (no dedicated n8n credential). Empty until the key is provisioned.
+      # LOOMLESS_BATCH_SIZE / LOOMLESS_DAILY_CAP: guards so a runaway CSV can't
+      #   silently burn quota.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY}
+      - LOOMLESS_BATCH_SIZE=${LOOMLESS_BATCH_SIZE}
+      - LOOMLESS_DAILY_CAP=${LOOMLESS_DAILY_CAP}
+      # Allow $env access inside Code nodes (workflows read the vars above).
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
     volumes:
       # Persists workflows, credentials, executions across restarts.
