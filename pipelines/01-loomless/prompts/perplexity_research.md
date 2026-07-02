@@ -1,12 +1,15 @@
 # Perplexity research prompt — Loomless
 
-> **Version:** v0.1 — DRAFT (not yet validated)
-> **Status:** Drafted from EasyGrow spec + Build Spec #2 guidance. **Not yet run
-> against test leads** — Perplexity API key is on hold (STEP 3 is a hard block
-> until the key is in `.env`). Do not treat the ≥7/10 usable-context target as
-> met until iteration happens.
-> **Model target:** Perplexity `sonar` / `sonar-pro` (online search). Final model
-> pinned during STEP 3 iteration.
+> **Version:** v0.1 — **UNTUNED. Final tuning at migration (Build Spec #6).**
+> **Status:** First-principles draft from the EasyGrow spec. Per PLAN v8
+> Decision #12 (mock-based dev), this prompt is **never run against real
+> Perplexity during dev** — the workflow uses a mock Code node returning
+> realistic JSON of this shape. This template is iterated against live
+> Perplexity only in Build Spec #6 (handoff), once real credentials exist on
+> the target machine. The ≥7/10 usable-context target is a Build Spec #6 gate,
+> not a dev gate.
+> **Model target (for live mode):** Perplexity `sonar` / `sonar-pro` (online
+> search). Final model pinned during Build Spec #6 tuning.
 
 ---
 
@@ -87,11 +90,12 @@ Return the JSON object described in the system message. Nothing else.
   (skips the Claude call) so operators know to skip that lead. A no-context lead
   is **not** an error — it still gets a row with `status=ready_for_review`.
 
-## Iteration log (STEP 3 — to be filled)
+## Iteration log (Build Spec #6 — to be filled at migration)
 
 | Version | Change | Result on sample_leads_10 (usable ≥ high-conf) |
 |---|---|---|
-| v0.1 | Initial draft (this file) | not yet run |
+| v0.1 | Initial draft (this file) — untuned | not run (mock dev) |
 
-**Acceptance (STEP 3):** ≥7/10 sample leads return high-confidence usable context.
-Document final version + rationale here before proceeding.
+**Acceptance (Build Spec #6):** ≥7/10 sample leads return high-confidence usable
+context against live Perplexity. Document final version + rationale here before
+switching Loomless to `LOOMLESS_MODE=live` in production.

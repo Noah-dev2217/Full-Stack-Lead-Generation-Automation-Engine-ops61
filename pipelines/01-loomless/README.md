@@ -10,6 +10,15 @@ summary.
 > by this pipeline (locked plan constraint). Operators send manually after
 > reviewing `status=ready_for_review` rows.
 
+> **Dev mode = mock (PLAN v8, Decision #12).** During local development the
+> Perplexity and Claude calls are **mocked** — Code nodes return realistic JSON
+> matching the real API response shapes. No real Perplexity/Anthropic calls, no
+> cost, no credentials, until migration (Build Spec #6). An env var
+> `LOOMLESS_MODE=mock|live` selects the path; `Sub_WriteRowToSheet` and
+> `Sub_NotifyDiscord` run with their real (free, already-provisioned) credentials
+> in both modes. Prompts in `prompts/` are drafted but **UNTUNED** — tuned in
+> Build Spec #6 against live APIs.
+
 ---
 
 ## How it works
@@ -86,15 +95,17 @@ clean diffs:
 
 ---
 
-## Build status
+## Build status (restructured for mock-based dev — PLAN v8)
 
-- [x] STEP 1 — repo scaffolding (this file + prompts + fixtures)
-- [~] STEP 2 — env vars + n8n credential (**Anthropic side done; Perplexity on hold**)
-- [ ] STEP 3 — Perplexity research prompt (**BLOCKED on Perplexity API key**)
-- [ ] STEP 4 — Claude first-line prompt
-- [ ] STEP 5 — build n8n workflow
-- [ ] STEP 6 — 3-lead smoke test
-- [ ] STEP 7 — failure-mode tests
-- [ ] STEP 8 — 100-lead dry run
-- [ ] STEP 9 — canvas sticky notes
-- [ ] STEP 10 — export + commit + merge
+Detailed steps live in the revised `BUILD_SPEC_2_LOOMLESS.md`.
+
+- [x] Repo scaffolding — README, prompt drafts (UNTUNED), test fixtures
+- [x] Env var placeholders — `.env.example` + `docker-compose.yml`
+      (`ANTHROPIC_API_KEY`, `PERPLEXITY_API_KEY`, `LOOMLESS_BATCH_SIZE`,
+      `LOOMLESS_DAILY_CAP`; `LOOMLESS_MODE` added in the revised spec)
+- [ ] Build n8n workflow with mock + live paths, switched by `LOOMLESS_MODE`
+- [ ] Validate end-to-end on **mock** data (row in Sheet, Discord fires,
+      failure modes handled)
+- [ ] Export workflow JSON + canvas sticky notes
+- [ ] **Build Spec #6 (migration):** provision real credentials, flip to
+      `LOOMLESS_MODE=live`, tune prompts against real APIs

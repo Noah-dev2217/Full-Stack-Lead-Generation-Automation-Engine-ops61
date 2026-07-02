@@ -1,11 +1,13 @@
 # Claude first-line prompt — Loomless
 
-> **Version:** v0.1 — DRAFT (not yet validated)
-> **Status:** Drafted from EasyGrow copywriting rules + Build Spec #2. **Not yet
-> iterated** — end-to-end tuning (STEP 4) depends on real Perplexity outputs,
-> which are blocked on the Perplexity key. Do not treat the ≥8/10 sendable
-> target as met until iteration happens.
-> **Model (PINNED):** `claude-sonnet-4-5-20250929` — use this exact string in the
+> **Version:** v0.1 — **UNTUNED. Final tuning at migration (Build Spec #6).**
+> **Status:** First-principles draft from EasyGrow copywriting rules. Per PLAN v8
+> Decision #12 (mock-based dev), this prompt is **never run against real Claude
+> during dev** — the workflow uses a mock Code node returning a realistic first
+> line of this shape. End-to-end tuning against live Perplexity + Claude outputs
+> happens in Build Spec #6 (handoff). The ≥8/10 sendable target is a Build Spec
+> #6 gate, not a dev gate.
+> **Model (PINNED, for live mode):** `claude-sonnet-4-5-20250929` — use this exact string in the
 > Anthropic node / HTTP Request node of the workflow. Build Spec #2 named
 > `claude-sonnet-4-6`, but this account/key resolves to
 > `claude-sonnet-4-5-20250929` (verified via direct `api.anthropic.com/v1/messages`
@@ -80,12 +82,12 @@ Write the first line.
 - Quotes a phrase from the research verbatim → reject (must paraphrase).
 - More than one sentence → reject.
 
-## Iteration log (STEP 4 — to be filled)
+## Iteration log (Build Spec #6 — to be filled at migration)
 
 | Version | Change | Result on sample_leads_10 (sendable count) |
 |---|---|---|
-| v0.1 | Initial draft (this file) | not yet run |
+| v0.1 | Initial draft (this file) — untuned | not run (mock dev) |
 
-**Acceptance (STEP 4):** ≥8/10 sample leads produce a first line you'd actually
-send. Document final version + rationale + the 10 sample outputs as evidence
-before proceeding.
+**Acceptance (Build Spec #6):** ≥8/10 sample leads produce a first line you'd
+actually send against live APIs. Document final version + rationale + the 10
+sample outputs as evidence before switching Loomless to `LOOMLESS_MODE=live`.
