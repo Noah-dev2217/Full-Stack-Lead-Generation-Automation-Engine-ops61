@@ -1,6 +1,6 @@
 # OPS-61 — Full-Stack Lead Generation & Automation Engine
 
-**Status:** PLAN v8 — mock-based dev + credentials-at-migration model locked (Decision #12). Foundation shipped; Loomless build restructured around mocks.
+**Status:** PLAN v9 — mock-based dev + credentials-at-migration model locked (Decision #12 + OAuth-defer corollary). Foundation shipped; Loomless pipeline built on mocks (Build Spec #2, STEP 3).
 **Owner:** Rinoah (solo dev), Jon (direction)
 **Due:** Jul 3
 **Linear:** OPS-61
@@ -107,6 +107,14 @@ New code: Terminator Loom recorder orchestrator + FB Group extension. Rest is re
 | 10 | FB Group Q3 conversion question | **Option A — DM permission.** Exact wording: "Would you like me to reach out to discuss how we may be able to help you with that?" | Directly aligns with DM Sorcery flow; operator already manually approves + sends welcome voice note, so explicit DM permission at the gate eliminates friction into the Engaged stage. Prioritizes immediate client acquisition over list-building. When Q3=Yes lands in Sheet, operator action is unambiguous: skip warm-up, use Direct Intent reply scripts, drop Calendly |
 | 11 | Profile pic overlay format | Static PNG default, animated GIF as opt-in config flag | Static is simpler + sufficient for v1 spec. GIF support adds ~5 lines of FFmpeg input flags; build it in but default off. EasyGrow notes GIF can boost preview view rate — A/B test in v2 |
 | 12 | Credential provisioning timing | **Deferred to migration day (Build Spec #6).** All pipelines built with mocked API responses locally. No real Perplexity, Anthropic, Drive OAuth, or FB session credentials during dev. | Rationale: (a) all credentials get reset/replaced when project transfers to company server anyway, (b) Perplexity Pro is a real recurring cost not worth burning pre-migration, (c) Anthropic prompt-tuning burns tokens that will be redone anyway once real production leads flow, (d) cleaner separation between "workflow logic" (portable, git-tracked) and "credentials" (target-machine, secret). Tradeoff: prompt quality is untuned at ship time; first real batches during Build Spec #6 will need a focused tuning pass. |
+
+**Decision #12 corollary (v9) — auth-node provisioning.** For ANY workflow node requiring OAuth or interactive account authorization (Drive Trigger, Chrome session tokens for BS#4, third-party service OAuth, etc.):
+
+- Build the node **structurally now** — correct type, correct parameters, correct downstream wiring, and a sticky note explaining what it does.
+- Leave the credential slot **UNWIRED** (or wire it to a **Service Account** where SA works).
+- Real OAuth provisioning happens at **Build Spec #6** handoff on the target machine.
+
+Rationale: Rinoah's dev account is never tied to production runs; the workflow stays portable across machines; dev-time credential setup burden drops; all auth work concentrates at handoff. **First application:** the Loomless **Drive Trigger** (Build Spec #2) is wired to the portable **OPS-61 Service Account** (reviewed + approved — the SA has editor on the inbox folder and is *not* a personal OAuth binding; it's replaced like all credentials at BS#6). It does **not** fire in dev — mock smoke tests run via a **Manual Trigger → "Fake Drive Payload"** entry alongside it; the Drive Trigger becomes the production entry at BS#6. (Nodes where SA does *not* work stay UNWIRED until BS#6 per the rule above.)
 
 ---
 
