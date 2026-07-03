@@ -1,4 +1,4 @@
-Company_Name,Owner_Full_Name,First_Name,Email,Website
-Ironclad Roofing Co,Robert Nkemelu,Robert,rob@ironcladroofing.com,https://ironcladroofing.com
-Redstone Builders,Robert Alvarez,Robert,robert@redstonebuilders.com,https://redstonebuilders.com
-Kingfisher Plumbing,Robert Osei,Robert,rob@kingfisherplumbing.com,https://kingfisherplumbing.com
+Company_Name,Owner_Full_Name,First_Name,Email,Website,_mock_scenario
+Ironclad Roofing Co,Robert Nkemelu,Robert,rob@ironcladroofing.com,https://ironcladroofing.com,no_context
+Redstone Builders,Robert Alvarez,Robert,robert@redstonebuilders.com,https://redstonebuilders.com,no_context
+Kingfisher Plumbing,Robert Osei,Robert,rob@kingfisherplumbing.com,https://kingfisherplumbing.com,no_context
