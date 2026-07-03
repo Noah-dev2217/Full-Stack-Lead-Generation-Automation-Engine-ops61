@@ -22,6 +22,7 @@ Outputs:
     <scratchpad>/loomless_harness.js   (only with --harness; path via env or arg)
 """
 
+import csv
 import json
 import os
 import sys
@@ -34,6 +35,26 @@ LOOMLESS_COLS = schema.TABS["Loomless"]
 _GENERATED = {"Research_Summary", "Personalized_First_Line", "status", "created_at"}
 LEAD_COLS = [c for c in LOOMLESS_COLS if c not in _GENERATED]  # 5 source-CSV cols
 REQUIRED_COLS = list(LEAD_COLS)  # required CSV headers == the 5 lead cols
+
+# Dev fixtures embedded into the "DEV: Fake Drive Payload" node, parsed verbatim
+# from the committed test-fixture CSVs so the in-workflow copy can never drift.
+# Keyed by a short name the operator selects via the node's FIXTURE constant.
+_FIXTURE_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..",
+    "pipelines", "01-loomless", "test-fixtures",
+)
+
+
+def _load_fixture(filename):
+    with open(os.path.join(_FIXTURE_DIR, filename), newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+FIXTURES = {
+    "smoke_test_3": _load_fixture("smoke_test_3.csv"),
+    "allnoctx_3": _load_fixture("smoke_test_allnoctx_3.csv"),
+}
+FIXTURES_JS = json.dumps(FIXTURES, indent=2)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PURE JS LOGIC (shared by n8n Code nodes AND the offline harness)
@@ -318,9 +339,24 @@ return { json: mockPplx($json) };
 """
 
 W_NORMALIZE = JS_LIB + """
-const lead = $('Extract Rows from CSV').item.json;
+// Re-attach the lead from Guard (the convergence node BOTH entry paths flow
+// through) — not Extract, which is skipped on the DEV/Manual path.
+const lead = $('Guard — batch/columns/dev-sheet').item.json;
 return { json: normalizeResearch($json, lead) };
 """
+
+W_DEVFAKE = (
+    "// DEV/Manual-trigger entry — bypasses the Drive Trigger (OAuth deferred to\n"
+    "// BS#6). Emits the selected fixture's rows exactly as Drive→Extract would,\n"
+    "// straight into Guard. Fixtures embedded verbatim from test-fixtures/*.csv.\n"
+    "const FIXTURE = 'smoke_test_3';  // ← Smoke 1. Change to 'allnoctx_3' for Smoke 2.\n"
+    "const FIXTURES = " + FIXTURES_JS + ";\n"
+    "const rows = FIXTURES[FIXTURE];\n"
+    "if (!Array.isArray(rows)) {\n"
+    "  throw new Error('Unknown FIXTURE \"' + FIXTURE + '\". Options: ' + Object.keys(FIXTURES).join(', '));\n"
+    "}\n"
+    "return rows.map(function (r) { return { json: r, pairedItem: { item: 0 } }; });\n"
+)
 
 W_NOCTX = JS_LIB + """
 return { json: noContextLine($json) };
@@ -423,7 +459,19 @@ def http_anthropic(node_id, pos):
 def build_workflow():
     nodes = []
 
-    # trigger + ingest ---------------------------------------------------------
+    # DEV / manual entry (STEP 3+) ---------------------------------------------
+    nodes.append({
+        "parameters": {},
+        "id": "loomless-0028", "name": "Manual Trigger — DEV",
+        "type": "n8n-nodes-base.manualTrigger", "typeVersion": 1, "position": [-1560, 60],
+    })
+    nodes.append(code_node("DEV: Fake Drive Payload", "loomless-0029", [-1120, 60], W_DEVFAKE))
+
+    # trigger + ingest (production entry) --------------------------------------
+    # Wired to the portable OPS-61 Service Account (Decision #12 corollary v9
+    # permits "SA where SA works"; SA has editor on the inbox folder). SA is NOT
+    # a personal OAuth binding and is replaced like every credential at BS#6. The
+    # trigger does not fire in dev — smoke tests use the Manual Trigger path.
     nodes.append({
         "parameters": {
             "authentication": "serviceAccount",
@@ -586,6 +634,30 @@ def build_workflow():
         "| `_mock_scenario=empty_line` | `dead` (Claude returns empty) |\n\n"
         "`[MOCK] ` prefixes `Research_Summary` + real first lines — but NEVER the `[NO_CONTEXT]` sentinel."
     ), w=460, h=280, color=5))
+    nodes.append(sticky("Doc — DEV manual entry", "loomless-note-8", [-1560, -200], (
+        "### 🧪 DEV manual entry (STEP 3+)\n\n"
+        "`Manual Trigger — DEV` → `DEV: Fake Drive Payload` → `Guard`. Bypasses the "
+        "Drive Trigger so smoke tests run with **no Drive OAuth**.\n\n"
+        "**Run a fixture:** open `DEV: Fake Drive Payload`, set "
+        "`const FIXTURE = 'smoke_test_3'` (or `'allnoctx_3'`), click **Test workflow**. "
+        "Fixtures are embedded verbatim from `pipelines/01-loomless/test-fixtures/`.\n\n"
+        "The two `Move CSV` nodes **soft-fail in DEV** (Continue-On-Fail; no real Drive "
+        "file to move) — expected. At BS#6 the Drive Trigger becomes the real entry."
+    ), w=420, h=280, color=6))
+    nodes.append(sticky("Doc — Drive Trigger auth (SA)", "loomless-note-9", [-1560, 470], (
+        "### 🔑 Drive Trigger → Service Account (approved deviation)\n\n"
+        "`Watch Loomless-Inbox (.csv)` is wired to **Google Sheets — OPS-61 SA** "
+        "(the SA has editor on the `Loomless-Inbox` folder, so SA polling works).\n\n"
+        "**Why this is safe / not an OAuth binding:** the Decision #12 corollary "
+        "(plan v9) permits a **Service Account where SA works**. The SA is **not** "
+        "Rinoah's personal OAuth account — it is portable and **gets replaced at "
+        "BS#6** like every other credential. So this is a sanctioned deviation from "
+        "'unwired', reviewed + approved.\n\n"
+        "**In dev the Drive Trigger does not fire** — smoke tests run via the Manual "
+        "Trigger → Fake Drive Payload path above. At BS#6 the SA is swapped for the "
+        "target machine's credential and this becomes the production entry "
+        "(`Download CSV` + `Extract Rows` then handle the real file)."
+    ), w=440, h=260, color=3))
     nodes.append(sticky("Doc — Rejected CSVs", "loomless-note-7", [-460, 720], (
         "### 🗂️ Where CSVs go after a run\n\n"
         "- **Success:** `OPS-61/Loomless-Inbox/processed/`\n"
@@ -608,6 +680,8 @@ def build_workflow():
     ), w=460, h=300, color=4))
 
     connections = {
+        "Manual Trigger — DEV": {"main": [[{"node": "DEV: Fake Drive Payload", "type": "main", "index": 0}]]},
+        "DEV: Fake Drive Payload": {"main": [[{"node": "Guard — batch/columns/dev-sheet", "type": "main", "index": 0}]]},
         "Watch Loomless-Inbox (.csv)": {"main": [[{"node": "Filter — .csv only", "type": "main", "index": 0}]]},
         "Filter — .csv only": {"main": [[{"node": "Download CSV", "type": "main", "index": 0}]]},
         "Download CSV": {"main": [[{"node": "Extract Rows from CSV", "type": "main", "index": 0}]]},
