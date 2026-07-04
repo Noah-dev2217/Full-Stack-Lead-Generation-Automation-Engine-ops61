@@ -1,6 +1,6 @@
 # OPS-61 — Full-Stack Lead Generation & Automation Engine
 
-**Status:** PLAN v9 — mock-based dev + credentials-at-migration model locked (Decision #12 + OAuth-defer corollary). Foundation shipped; Loomless pipeline built on mocks (Build Spec #2, STEP 3).
+**Status:** PLAN v9 — mock-based dev + credentials-at-migration model locked (Decision #12 + OAuth-defer corollary). Foundation + Loomless (Pipeline 1, Build Spec #2) SHIPPED to main (`fa63f00`, 2026-07-05). **Next: Pipeline 2 — JV Research Bot.**
 **Owner:** Rinoah (solo dev), Jon (direction)
 **Due:** Jul 3
 **Linear:** OPS-61
@@ -380,9 +380,9 @@ Dev uses placeholders (any 90-second mp3, any square headshot) during build. Swa
 ## Build order
 
 0. ~~**SPIKE: validate `--auto-select-tab-capture-source-by-title` flag** with Playwright + ScreenFlow~~ ✅ **DONE.** Picker bypass confirmed. Tab selection driven by foreground focus, not title-match; Pipeline 3 will click ScreenFlow's record button via Playwright JS evaluation while keeping Prospect tab in foreground.
-1. **Sheets schema + n8n base workflow scaffolding** — foundation, all pipelines need it
-2. **Loomless pipeline** — highest revenue impact, validates Perplexity + Claude prompts
-3. **JV Research Bot** — reuses Loomless's Perplexity integration
+1. ~~**Sheets schema + n8n base workflow scaffolding** — foundation~~ ✅ **DONE** (Build Spec #1, merged to main).
+2. ~~**Loomless pipeline** — highest revenue impact, validates Perplexity + Claude prompts~~ ✅ **DONE** (Build Spec #2, merged to main `fa63f00`, 2026-07-05). Mock-validated: Smoke 1/2 + 4 failure modes + 100-lead run all green ($0); prompts UNTUNED until BS#6. Canonical source = n8n UI export; see `docs/MIGRATION_NOTE.md`.
+3. **JV Research Bot** — reuses Loomless's Perplexity integration ← **NEXT**
 4. **FB Group Chrome extension + webhook** — narrow scope, ships fast
 5. **Terminator Loom recorder** — most complex, dedicated Claude Code session, depends on spike #0
 6. **Handoff to company server machine** — package + migrate the full stack (n8n workflows, credentials shape, recorder service, docker compose, docs) to the company server. Uses the `handoff-package` skill. Produces a `HANDOFF.md` runbook that a fresh operator can follow to bring the whole system online. **Additionally (per Decision #12):** provision real credentials on the target machine (Anthropic, Perplexity, Google Service Account, Discord webhook, Chrome extension install, master MP3 + profile pic assets), run one real batch per pipeline as the acceptance test, and complete prompt tuning against real API responses.
