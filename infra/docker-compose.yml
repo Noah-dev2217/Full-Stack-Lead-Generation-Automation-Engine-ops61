@@ -57,11 +57,18 @@ services:
       - DISCORD_WEBHOOK_OPS61_FEED=${DISCORD_WEBHOOK_OPS61_FEED}
 
       # Loomless pipeline (Build Spec #2). LLM keys + batch safety valves.
+      # LOOMLESS_MODE: mock | live. Dev default `mock` — no real API calls, $0 cost.
+      #   An IF node on $env.LOOMLESS_MODE selects mock Code vs live HTTP Request.
+      # LOOMLESS_DEV_SHEET_ID: the dev CRM Sheet. The workflow's fail-closed guard
+      #   refuses to write in mock mode unless GOOGLE_SHEET_ID == this. = GOOGLE_SHEET_ID
+      #   during dev.
       # ANTHROPIC_API_KEY: read by the Anthropic credential + Claude first-line call.
       # PERPLEXITY_API_KEY: read directly in the HTTP Request Authorization header
       #   (no dedicated n8n credential). Empty until the key is provisioned.
       # LOOMLESS_BATCH_SIZE / LOOMLESS_DAILY_CAP: guards so a runaway CSV can't
       #   silently burn quota.
+      - LOOMLESS_MODE=${LOOMLESS_MODE}
+      - LOOMLESS_DEV_SHEET_ID=${LOOMLESS_DEV_SHEET_ID}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY}
       - LOOMLESS_BATCH_SIZE=${LOOMLESS_BATCH_SIZE}
